@@ -38,7 +38,7 @@ function run(command, args, options = {}) {
   if (result.error) throw result.error;
   if (result.status !== 0) {
     const detail = options.capture
-      ? (result.stderr || result.stdout).trim()
+      ? [result.stdout, result.stderr].filter(Boolean).join("\n").trim()
       : "";
     throw new Error(`${basename(command)} failed${detail ? `: ${detail}` : ""}`);
   }
@@ -193,6 +193,7 @@ function checkPlatformCapture() {
     throw new Error("Native capture probe returned an invalid contract");
   }
   if (process.platform === "darwin") {
+    run(executable, ["--geometry-self-test"]);
     if (probe.adapters.some(adapter => adapter.hardwareH264.length > 0)) {
       run(executable, ["--self-test"]);
     } else {
@@ -220,6 +221,8 @@ if (mode === "--race") {
   buildWebAssets();
   runGoTests(process.env.PIIK_GO?.trim() || "go", [
     "./internal/app/portmapping", "./internal/app/mediaedge",
+    "./internal/app/nativecontrol", "./internal/app/loopback",
+    "./internal/server/app",
     "github.com/netbirdio/go-nat/...", "github.com/jackpal/go-nat-pmp",
   ], ["-race", "-count=1", "-timeout=2m"]);
 } else {

@@ -21,10 +21,10 @@ Apple 芯片或 Intel Mac，以及 macOS 13 或更新版本。构建程序包与
 
 ## 运行模式
 
-- 不传模式参数时，App 在系统浏览器中打开启动页。选择本地房间、临时公网 HTTPS 邀请
-  或已保存的站点后，进入通常的房主页面。
-- 启动页会记住上次点击 **进入 Piik** 确认的模式，以及保存的站点地址。
-  没有已保存的模式时，有站点地址就默认选中站点，否则选中公网邀请；确认后才启动。
+- 不传模式参数时，App 打开启动页，等待已授权站点使用。选择 **本地房间** 或
+  **公网邀请**，可在这台设备上启动房间服务，进入通常的房主页面。
+- 启动页会记住上次点击 **进入 Piik** 确认的模式。
+  没有已保存的本地/公网选择时，默认选中公网邀请；确认后才启动。
   模式偏好保存在配置旁的 `client.json.mode` 中；保存项与自定义路径见
   [App 配置](../../docs/standards/configuration.md#piik-app-configuration)。
 - `--site`、`--local` 和 `--link` 用于在 CI 或开发时直接选择模式。
@@ -39,15 +39,17 @@ Apple 芯片或 Intel Mac，以及 macOS 13 或更新版本。构建程序包与
 [路由参考](../../docs/standards/routing-transport.md)。
 
 本地邀请会自动选择唯一的活动地址或唯一的私有 IPv4 地址。仍有多个可能地址时，
-请在启动页选择网卡和 IP。公网邀请和站点模式无需选择局域网地址。
+请在启动页选择网卡和 IP。公网邀请和搭配站点使用时无需选择局域网地址。
 通过 `--local` 跳过启动页时，可用 `--lan-address <address>` 指定地址来解决多地址歧义。
 App 会在启动时再次检查所选地址；它只影响本地邀请链接，媒体路径仍由 ICE 独立选择。
 
-站点模式使用所配置站点的房间，以及该站点已启用的 SFU 兜底。
-通过 App 打开的站点会记住原生功能的启用选择，之后打开该站点的页面可继续使用正在运行的 App。
+使用 Piik 站点时，保持 App 运行，点击站点顶部的 **App**，在本机确认页核对网址并允许使用。
+App 记住一个已授权站点，可在启动页打开或取消授权。允许另一个站点会替换旧站点，
+结束旧站点的 App 连接；本地房间不受影响。同一浏览器记住启用选择，
+之后访问站点即可继续使用 App，同时使用该站点的房间和已启用的 SFU 兜底。
 没有 App 时仍可使用浏览器采集，详见[进入流程](../../docs/standards/presentation-lifecycle.md#product-surface)。
 
-房主页面提供浏览器采集及可用的原生窗口或屏幕，请明确选择来源。
+房主页面提供浏览器、摄像头采集，以及可用的原生窗口或屏幕，请明确选择来源。
 Windows 原生采集提供 VP8/Auto/H264，Auto 会为本次分享选定一种编码。
 macOS 和 Linux 原生采集需要硬件 H264。可选来源与音频支持取决于平台，设置要求见
 [Windows](../../native/capture/windows/README.md)、[macOS](../../native/capture/darwin/README.md)
@@ -66,7 +68,7 @@ App 配置保存可选的本地站点口令。留空表示本地站点开放进�
 
 终端显示当前模式、入口链接与启动状态，语言跟随启动页和已启用 App 的页面。
 按 `o` 重新打开浏览器，按 `q` 或 Ctrl+C 结束本地房间，停止本地服务与临时公网链接。
-纯文本输出时使用 Ctrl+C。关闭站点标签页后，App 仍会继续运行。
+纯文本输出时使用 Ctrl+C。Linux 桌面入口也会打开此终端。关闭站点标签页后，App 仍会继续运行。
 App 在独立 Windows 控制台中启动时，启动或运行错误会保留在窗口中，按 Enter 后退出。
 正常关闭、在已有终端中运行、重定向输出或自动化运行时，会直接退出。
 
@@ -87,7 +89,7 @@ App 在独立 Windows 控制台中启动时，启动或运行错误会保留在�
 
 ### 诊断
 
-在启动页开启 **诊断启动**，进入 Piik 并复现问题，再在交互终端按 `D` 导出本地 ZIP。
+在启动房间或连接站点前，先在启动页开启 **诊断启动**，复现问题后在交互终端按 `D` 导出本地 ZIP。
 启动页出现前就失败时，使用 `--debug`。导出不会停止分享或上传文件。
 浏览器诊断通过主题按钮后的 **诊断** 芯片图标开启：确认重新加载后，使用 **网页报告** 下载。
 调查浏览器与 App 配合的问题时，请提供同一次复现的两份报告。
@@ -116,7 +118,7 @@ go build -o build/dev/piik-app.exe ./cmd/piik-app
 ./build/dev/piik-app.exe
 ```
 
-这些命令只构建 App。体验浏览器采集时，选择 **本地房间** 或配置好的站点。
+这些命令只构建 App。体验浏览器采集时，选择 **本地房间**，或直接打开 Piik 站点。
 原生采集和 **公网邀请** 需要各自的辅助程序，可用 `--capture-process` / `--tunnel-process`
 指定已构建的程序，或按[打包](#打包)步骤生成完整程序包。
 
@@ -214,16 +216,6 @@ PIIK_GO=/path/to/go \
 npm run gate:app-native-host
 
 PIIK_CLIENT_NATIVE_HOST_GATE=true \
-PIIK_CLIENT_CROSS_NAT_GATE=true \
-CHROME_PATH=/path/to/chrome \
-PIIK_GO=/path/to/go \
-PIIK_REMOTE_HOST=<public-test-host> \
-PIIK_REMOTE_USER=<ssh-user> \
-PIIK_REMOTE_SSH_KEY=/path/to/key \
-PIIK_CLIENT_GATE_STUN_URLS=stun:<stun-host>:3478 \
-npm run gate:app-native-host
-
-PIIK_CLIENT_NATIVE_HOST_GATE=true \
 PIIK_CLIENT_LINK_MEDIA_GATE=true \
 CHROME_PATH=/path/to/chrome \
 PIIK_GO=/path/to/go \
@@ -246,7 +238,8 @@ Windows media gate 验证一个硬件 H.264 采集代次、共享 Pion 来源、
 STUN 候选收集。native Host gate 验证房间创建及当前路由上的原生视频传输；
 能力探测与目标系统支持时，也包含原生音频。
 
-跨 NAT 变体仅将临时反向 SSH 路径用于信令，并要求选中的媒体候选对包含 `srflx` 或 `prflx`；
-媒体不会经过 SSH。公网邀请媒体变体通过 App 临时公网来源传送相同信令，
-并要求将媒体直接传给独立的 Linux 对端。原生 P2P 质量证据与内嵌 SFU 传输有各自的验证入口。
+公网邀请媒体变体通过 App 临时公网地址传送信令，要求将视频 RTP 直接传给独立的 Linux 对端，
+且选中的候选对包含 `srflx` 或 `prflx`。SSH 仅运行远端探针，媒体不会经过 SSH。
+不配置远端主机时，该变体在本机浏览器中通过公网邀请检查解码画面，不能据此认定跨网络连通。
+原生 P2P 质量证据与内嵌 SFU 传输有各自的验证入口。
 macOS 和 Linux 采集仍需实机桌面与媒体验证，CI 编译及程序包冒烟检查不能替代这些验证。

@@ -244,6 +244,23 @@ function feedVideoStats(
 }
 
 describe("embedded SFU browser transport", () => {
+  it.each([100_000, 200_000, 50_000_000])("keeps every simulcast output within the %i bps source ceiling", async (maxBitrate) => {
+    const send = vi.fn(() => true);
+    const host = new SfuPublisher({ send, onDisconnected: vi.fn() });
+    cleanups.push(() => host.disconnect());
+    await host.connect(config);
+    expect(await host.activate(stream(new FakeTrack("video")),
+      { ...QUALITY_PROFILES["1080p30"], maxBitrate, maxFramerate: 5 }, "h264")).toBe(true);
+    const encodings = FakePc.instances[0]!.transceivers[0]!.sender.getParameters().encodings;
+    expect(encodings).toHaveLength(2);
+    expect(encodings[1]!.maxBitrate).toBe(maxBitrate);
+    for (const encoding of encodings) {
+      expect(encoding.maxBitrate).toBeGreaterThan(0);
+      expect(encoding.maxBitrate).toBeLessThanOrEqual(maxBitrate);
+      expect(encoding.maxFramerate).toBe(5);
+    }
+  });
+
   it("uses capture dimensions for simulcast before a generated sender has its first frame", async () => {
     class Generator extends FakeTrack {
       writable = new WritableStream<VideoFrame>();
@@ -373,7 +390,7 @@ describe("embedded SFU browser transport", () => {
     const { publisher: host, pc, send } = await publisher();
     const profile = {
       ...QUALITY_PROFILES["720p30"],
-      screenAudioQuality: "very-high" as const,
+      maxAudioBitrate: 192000 as const,
     };
     expect(await host.updateProfile(profile)).toBe(true);
     expect(pc.transceivers[0]!.sender.parameters.encodings).toEqual([
@@ -631,6 +648,20 @@ describe("embedded SFU browser transport", () => {
     expect(onStream).toHaveBeenLastCalledWith(null);
   });
 
+  it("reports Browser video rejection through the existing SFU failure owner", async () => {
+    const send = vi.fn(() => true), onDisconnected = vi.fn();
+    const subscriber = new SfuSubscriber({ send, onStream: vi.fn(), onDisconnected });
+    cleanups.push(() => subscriber.disconnect());
+    await subscriber.connect(config);
+    const pc = FakePc.instances[0]!;
+    pc.createAnswer.mockResolvedValueOnce({ type: "answer", sdp: "m=video 0 UDP/TLS/RTP/SAVPF 120\r\n" });
+    await subscriber.acceptSignal(signal({ description: { type: "offer",
+      sdp: "m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=sendonly\r\n" } }));
+    expect(onDisconnected).toHaveBeenCalledExactlyOnceWith("VIDEO_REJECTED");
+    expect(pc.close).toHaveBeenCalledOnce();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it.each([
     [false, false], [true, false], [false, true], [true, true],
   ])("retires an unfinished ICE restart on reauthentication (send=%s, answer=%s)", async (sent, answered) => {
@@ -680,7 +711,7 @@ describe("embedded SFU browser transport", () => {
     expect(
       await host.updateProfile({
         ...QUALITY_PROFILES["1080p30"],
-        screenAudioQuality: "saver",
+        maxAudioBitrate: 64000,
       }),
     ).toBe(true);
     expect(video.clones[0]!.applyConstraints).toHaveBeenCalledTimes(

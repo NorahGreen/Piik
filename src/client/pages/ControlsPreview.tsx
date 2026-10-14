@@ -19,9 +19,9 @@ import { LauncherForm, type AppMode } from "../components/living/LauncherForm";
 import { AppReleaseNotice } from "../components/living/AppReleaseNotice";
 import { useTheaterMode } from "../components/living/use-theater-mode";
 
-import { QualityPresets } from "../components/living/QualityPresets";
+import { AudioBitrateControl, PicturePreferenceControl, QualityPresets, ResolutionControl, VideoRateControls } from "../components/living/QualityPresets";
 import { RoomCodeInput } from "../components/living/RoomCodeInput";
-import type { QualityProfileId } from "../media/quality";
+import { MAX_SCREEN_AUDIO_BITRATE, VIDEO_CAPTURE_LIMITS, QUALITY_PROFILES, captureFramerateCeiling, matchingQualityProfileId, type QualityProfile } from "../media/quality";
 import type { loadCameraPreviews } from "../media/camera-previews";
 import { Tooltip } from "../components/living/Tooltip";
 import { StatusIndicator } from "../components/living/StatusIndicator";
@@ -57,6 +57,7 @@ export function ControlsPreview() {
   const [voiceProcessing, setVoiceProcessing] = useState(true);
   const [microphoneDevice, setMicrophoneDevice] = useState("");
   const [sharingSettings, setSharingSettings] = useState(false);
+  const [quality, setQuality] = useState<QualityProfile>(QUALITY_PROFILES["1080p30"]);
   const [launchMode, setLaunchMode] = useState<AppMode>("link");
   const [majorUpdate, setMajorUpdate] = useState(true);
   const releaseVersion = majorUpdate ? "v2.0.0" : "v1.1.0";
@@ -64,7 +65,6 @@ export function ControlsPreview() {
   const [launchSite, setLaunchSite] = useState("");
   const [launchPassword, setLaunchPassword] = useState("");
   const [launchLan, setLaunchLan] = useState("192.0.2.10");
-  const [preset, setPreset] = useState<QualityProfileId>("1080p30");
   const [policy, setPolicy] = useState<"open" | "private">("open");
   const [roomPassword, setRoomPassword] = useState(false);
   const [includeCredential, setIncludeCredential] = useState(true);
@@ -117,14 +117,26 @@ export function ControlsPreview() {
           <Btn id="host-stop-share" icon="stop" tone="danger" title="host.stop" cap="host.stop" hint="hint-share-stop" onClick={notify} />
         </div>
         <SharingSettings id="preview-sharing-settings" open={sharingSettings}
-          presets={<QualityPresets selected={preset} onSelect={setPreset} />}
-          audio={<><div className="lr-door-group lr-source-audio-settings">
+          presets={<QualityPresets selected={matchingQualityProfileId(quality)}
+            onSelect={id => setQuality(current => ({ ...QUALITY_PROFILES[id], maxAudioBitrate: current.maxAudioBitrate }))} />}
+          picture={<><ResolutionControl value={quality.resolution} limits={VIDEO_CAPTURE_LIMITS} disabled={false}
+            onChange={resolution => setQuality(current => ({ ...current, resolution,
+              maxFramerate: Math.min(current.maxFramerate, captureFramerateCeiling(resolution)),
+            }))} />
+            <VideoRateControls value={quality} limits={VIDEO_CAPTURE_LIMITS} disabled={false}
+              onChange={change => setQuality(current => ({ ...current, ...change }))} />
+            <PicturePreferenceControl value={quality.degradationPreference} disabled={false}
+              onChange={degradationPreference => setQuality(current => ({ ...current, degradationPreference }))} /></>}
+          audio={<><AudioBitrateControl value={quality.maxAudioBitrate ?? QUALITY_PROFILES["1080p30"].maxAudioBitrate} max={MAX_SCREEN_AUDIO_BITRATE}
+              disabled={false} onChange={maxAudioBitrate => setQuality(current => ({ ...current, maxAudioBitrate }))} />
+          <div className="lr-door-group lr-source-audio-settings">
             <SwitchItem checked={sound} onChange={setSound} label={t("host.sourcePicker.systemAudio")}
               hint={sound ? "hint-stop-audio" : "hint-share-audio"} />
             <LiveAudioExclusion load={previewApplications} value={excludedAudio} onChange={setExcludedAudio} disabled={!sound || paused} />
           </div><HostMicrophoneSettings deviceId={microphoneDevice} onDevice={setMicrophoneDevice} loadDevices={previewMicrophones}
             native enabled={microphone} disabled={paused} volume={microphoneVolume} onVolume={setMicrophoneVolume}
-            voiceProcessing={voiceProcessing} onVoiceProcessing={setVoiceProcessing} /></>}
+            voiceProcessing={voiceProcessing} onVoiceProcessing={setVoiceProcessing} />
+          </>}
         />
       </section>
       <section id="option-preview" className="cp-card">
@@ -243,8 +255,8 @@ export function ControlsPreview() {
         </button>
       </div>
       <div className="lr-client-launch">
-        <LauncherForm version="v1.0.0" mode={launchMode} onModeChange={setLaunchMode}
-          site={launchSite} onSiteChange={setLaunchSite}
+        <LauncherForm mode={launchMode} onModeChange={setLaunchMode}
+          site={launchSite} onRemoveSite={() => setLaunchSite("")}
           lan={{ selected: launchLan, onChange: setLaunchLan, addresses: [
             { address: "192.0.2.10", name: "Wi-Fi" },
             { address: "192.0.2.20", name: "vEthernet (Example Virtual Network Adapter with a Long Name)" },
@@ -260,7 +272,7 @@ export function ControlsPreview() {
     </section>
     <section id="interaction-preview" className="cp-section">
       <header className="cp-section-head"><span className="cp-number">09</span><div><h2>{en ? "A little company" : "聊两句，丢个番茄。"}</h2>
-        <p>{en ? "Click a person for reactions. Drag or resize either window." : "点小人发表情；聊天与表情窗都能拖动、缩放。"}</p></div></header>
+        <p>{en ? "Click a person for reactions. Move or resize either panel; supported browsers can pop chat out into an always-on-top window." : "点小人发表情；聊天与表情窗都能拖动、缩放。支持的浏览器还可将聊天弹出为置顶小窗。"}</p></div></header>
       <InteractionControlsPreview />
     </section>
   </>;

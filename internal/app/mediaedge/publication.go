@@ -82,8 +82,8 @@ func (engine *Engine) NewPublication(source *Source, options EdgeOptions) (*Publ
 		return nil, err
 	}
 	publication.transport = transport
-	transport.SetAudioBitrate(options.Audio.configuredBitrate())
 	publication.signaling.connection = transport.PC
+	publication.signaling.audioSource = options.Audio
 	publication.signaling.localCandidates = newLocalCandidateGathering(socket, options.ICEServers, nil, options.Events.LocalCandidate)
 	transport.PC.OnICECandidate(publication.signaling.localCandidates.addPion)
 	transport.PC.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
@@ -117,7 +117,7 @@ func (publication *Publication) CreateOffer() (webrtc.SessionDescription, error)
 	return publication.signaling.CreateOffer()
 }
 func (publication *Publication) SetAnswer(answer webrtc.SessionDescription) error {
-	return publication.signaling.SetAnswer(answer)
+	return publication.signaling.SetAnswer(answer, "")
 }
 func (publication *Publication) AddRemoteCandidate(candidate *webrtc.ICECandidateInit) error {
 	return publication.signaling.AddRemoteCandidate(candidate)
@@ -207,7 +207,6 @@ func (publication *Publication) Media() PublicationMedia {
 		media.Layers[index] = PublicationLayer{RID: forwarding.PublicationRID(index, len(info.Layers)),
 			Width: layer.Width, Height: layer.Height, Bitrate: layer.Bitrate}
 	}
-	publication.transport.SetAudioBitrate(media.AudioBitrate)
 	return media
 }
 

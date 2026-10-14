@@ -147,9 +147,22 @@ func TestAudioEOFWaitsForExplicitSourceReplacement(t *testing.T) {
 			}
 		}
 	})
-	offer, err := session.PrepareLocalEdge("audio-edge")
+	offer, err := session.PrepareLocalEdge("audio-edge", "local_offer_1", false)
 	check(err)
 	check(receiver.SetRemoteDescription(offer))
+	// A receive preference belongs to this answer, not the upstream offer.
+	for _, transceiver := range receiver.GetTransceivers() {
+		if transceiver.Kind() != webrtc.RTPCodecTypeAudio {
+			continue
+		}
+		for _, codec := range transceiver.Receiver().GetParameters().Codecs {
+			if codec.MimeType == webrtc.MimeTypeOpus {
+				codec.SDPFmtpLine = "stereo=1;maxaveragebitrate=510000"
+				check(transceiver.SetCodecPreferences([]webrtc.RTPCodecParameters{codec}))
+				break
+			}
+		}
+	}
 	go func() {
 		for {
 			select {
@@ -171,7 +184,7 @@ func TestAudioEOFWaitsForExplicitSourceReplacement(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("receiver gathering timed out")
 	}
-	check(session.SetAnswer("audio-edge", *receiver.LocalDescription()))
+	check(session.SetAnswer("audio-edge", *receiver.LocalDescription(), "local_offer_1"))
 	waitPackets := func(counter *atomic.Uint64, minimum uint64, label string) {
 		t.Helper()
 		deadline := time.Now().Add(3 * time.Second)

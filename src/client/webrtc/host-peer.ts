@@ -11,14 +11,14 @@ import {
   configureScreenAudioSender,
   configureVideoSender,
   needsStartupVideoProfile,
-  resolveScreenAudioQuality,
-  screenAudioQualityEqual,
+  screenAudioBitrate,
+  screenAudioSenderCeiling,
+  audioQualitySettingsEqual,
   STARTUP_VIDEO_ENCODED_FRAMES,
   startupVideoProfile,
   videoQualitySettingsEqual,
   type AudioSenderParameterReadback,
   type QualityProfile,
-  type ScreenAudioQuality,
 } from "../media/quality";
 import { cloneSenderVideoTrack, stopSenderVideoTrack } from "../media/sender-video-track";
 import { EMPTY_METRICS, type PeerSnapshot } from "../types";
@@ -92,7 +92,7 @@ export class HostPeer {
   private statsInFlight = false;
   private statsSamplingBlocked = false;
   private appliedVideoProfile: QualityProfile | null = null;
-  private appliedAudioQuality: ScreenAudioQuality | null = null;
+  private appliedAudioBitrate: number | null = null;
   private appliedAudioSenderParameters:
     | AudioSenderParameterReadback
     | null = null;
@@ -368,7 +368,7 @@ export class HostPeer {
       : profile;
     const changed =
       !videoQualitySettingsEqual(this.desiredProfile, profile) ||
-      !screenAudioQualityEqual(this.desiredProfile, profile);
+      !audioQualitySettingsEqual(this.desiredProfile, profile);
     this.desiredProfile = profile;
     // Connection recovery replays the same intent, not a new user mutation.
     const requestedRevision = changed ? ++this.profileRevision : this.profileRevision;
@@ -408,8 +408,8 @@ export class HostPeer {
             effectiveVideoProfile,
           ));
       const updateAudio =
-        this.appliedAudioQuality !==
-          resolveScreenAudioQuality(profile.screenAudioQuality);
+        this.appliedAudioBitrate !==
+          screenAudioBitrate(profile.maxAudioBitrate);
       if (!updateVideo && !updateAudio) {
         return true;
       }
@@ -436,7 +436,7 @@ export class HostPeer {
   }
 
   async acceptSignal(payload: SignalPayload): Promise<void> {
-    if (this.disposed || payload.connectionId !== this.connectionId) {
+    if (this.disposed || payload.connectionId !== this.connectionId || payload.kind === "punch") {
       return;
     }
 
@@ -552,7 +552,7 @@ export class HostPeer {
         this.awaitingReconnect = false;
         if (replayProfile) {
           this.appliedVideoProfile = null;
-          this.appliedAudioQuality = null;
+          this.appliedAudioBitrate = null;
           this.appliedAudioSenderParameters = null;
         }
         if (replayProfile || !this.startupVideoProfilePending) {
@@ -745,6 +745,20 @@ export class HostPeer {
       if (!this.ownsAnswer(epoch)) {
         return;
       }
+      const audio = this.audioSender;
+      if (audio?.track && screenAudioSenderCeiling(audio.getParameters(),
+        screenAudioBitrate(this.desiredProfile.maxAudioBitrate)) !== audio.getParameters().encodings[0]?.maxBitrate) {
+        // Never await sender work inside negotiation: source replacement can
+        // already be waiting for this negotiation queue to finish.
+        void this.enqueueSenderMutation(async () => {
+          if (this.disposed || !this.videoSender || this.audioSender !== audio) return;
+          const revision = this.profileRevision;
+          const applied = await this.configureSender(this.videoSender, audio, {
+            profile: this.desiredProfile, profileRevision: revision, video: false, audio: true,
+          });
+          if (!applied && !this.disposed && revision === this.profileRevision) this.fail();
+        }).catch(error => this.fail(error));
+      }
       await this.flushCandidates();
       if (this.ownsAnswer(epoch)) {
         this.clearAnswerTimer();
@@ -924,7 +938,7 @@ export class HostPeer {
         try {
           audioSenderParameters = await this.waitForOperation(() => configureScreenAudioSender(
             audioSender,
-            profile.screenAudioQuality,
+            screenAudioBitrate(profile.maxAudioBitrate),
           ));
         } catch (error) {
           if (this.disposed) return false;
@@ -950,8 +964,8 @@ export class HostPeer {
       this.appliedVideoProfile = profile;
     }
     if (mutation.audio && audioSucceeded) {
-      this.appliedAudioQuality = resolveScreenAudioQuality(
-        profile.screenAudioQuality,
+      this.appliedAudioBitrate = screenAudioBitrate(
+        profile.maxAudioBitrate,
       );
       this.appliedAudioSenderParameters = audioSenderParameters;
     }

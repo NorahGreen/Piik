@@ -61,10 +61,19 @@ baseline contract; introduce a small optional capability only for a concrete
 new feature. Do not add a version-range solver, general adapter framework,
 parallel authority writers or blanket old-client fallback paths.
 
+Keep the 2.x baseline long-lived. Substantial new functionality can remain a
+minor release when older peers retain established behavior and new behavior is
+explicitly opted into. A small feature can still be breaking if it unconditionally
+changes a strict message, existing semantics or durable authority. Review those
+boundaries before choosing the version; neither feature count nor a desire to
+avoid a major justifies mislabeling an incompatible release.
+
 ## Extending Interfaces
 
-Command/event JSON objects still reject unknown keys and enums, and required
-fields reject omissions. Therefore even adding a field can break the other side.
+Command/event JSON objects still reject unknown keys, and required fields reject
+omissions. Most enums remain closed; the bounded display-only reaction identifier
+has an explicit [receive-side exception](./rooms-access.md#room-interactions).
+Therefore even adding a field can break the other side.
 The former required `sfu` addition to strict `/api/capabilities` demonstrated
 both directions of this problem; an unchanged signaling identifier does not
 cover HTTP compatibility.
@@ -75,7 +84,15 @@ capability means unavailable. Commands, credentials and authority checks remain
 strict. A new
 message type, enum value or behavior-changing field is emitted only after the
 other side advertises support; accepting unknown metadata is not permission to
-execute unknown commands. Verify both readers before calling a change additive.
+execute unknown commands. A more tolerant reader does not update already-released
+readers: do not emit a new reaction to legacy pages merely because current pages
+can skip it. Verify both readers before calling a change additive.
+
+In the 2.0 contract, numeric media descriptions and retry progress
+are independent of current implementation limits and retry policy. Extending
+those policies does not require another count-specific capability flag.
+Representation acceptance still requires local operation/resource admission;
+it is not a promise that every same-major peer can produce a new media format.
 
 Native discovery distinguishes an incompatible Piik App from an absent App and
 reports protocol numbers to local diagnostics; the source picker offers update/
@@ -176,7 +193,9 @@ after all required artifacts and checks pass. The publisher verifies matching
 version, source SHA and checksums, then creates/uploads/publishes one GitHub draft.
 When there are no unpublished product changes, CI validates a development build
 and skips packaging and publication; it never assigns an old release version to
-a new source SHA. The separate Website workflow updates the static site after CI.
+a new source SHA. The separate Website and Gitee mirror workflows follow successful
+main CI independently. Mirror failure must remain visible without blocking GitHub
+publication or Website deployment; retries use the original publishing artifacts.
 Failed draft uploads can resume; published artifacts are never overwritten.
 An older draft retried after a newer release cannot take over `latest`.
 
@@ -225,11 +244,11 @@ first-parent commits since the previous stable tag. Standalone website and
 documentation phases need no product release notes. The first release uses
 only its launch commit's product introduction; private development history is
 not a launch changelog. Missing, empty, duplicate or visibly encoding-damaged
-sections fail validation before packaging/publication. GitHub Actions shows the generated text in its
-run summary. A manual candidate with an explicit version also previews it, so
-prepare its commit text before dispatching a release rehearsal. A manual
-candidate with no product changes may still be built; its summary reports that
-there are no product release notes, and publication remains disabled.
+sections fail PR and publishing validation. GitHub Actions shows the generated
+release text in its publishing run summary. Manual candidates validate and build
+the requested revision without requiring release copy in branch checkpoints;
+their version labels artifacts and never enables publication. The PR body remains
+the review surface until integration preserves it in the squash commit.
 
 Supply multiline PR/release copy through a UTF-8 file and read back the stored
 body before integration. A terminal preview alone does not prove that Chinese

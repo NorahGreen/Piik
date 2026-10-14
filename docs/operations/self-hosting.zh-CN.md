@@ -1,6 +1,6 @@
 # 部署 Piik Server
 
-[English](./self-hosting.md) · 简体中文 · [文档导航](../README.md)
+[English](./self-hosting.md) · 简体中文 · [文档导航](../guide/README.zh-CN.md)
 
 Piik Server 将网页、房间管理和可选的媒体转发打包在**一个服务端程序**中。
 解压后即可运行，房间数据保存在 SQLite 中。
@@ -130,6 +130,7 @@ TCP 8787 仅供本机反向代理访问。STUN 域名需要直接解析到服务
 
 在 `.env` 中添加 `SFU_UDP_PORT=7882`，放行 UDP 7882，再重启 Piik，即可启用自动 SFU 兜底。
 如果服务器处于 NAT 后方，还需将 `SFU_PUBLIC_IP` 设置为外部可达的公网 IPv4 地址。
+公网和内部映射的 UDP 端口都应与 `SFU_UDP_PORT` 一致。
 这项功能由同一个服务端程序提供。
 服务器需要为实际经由 SFU 观看的观众承担转发负载和出口带宽。
 房主需要在开始分享前关闭 **隐私模式**，才会允许使用这条线路。

@@ -54,6 +54,11 @@ share generation:
   attempts show retry 1/3, 2/3 and 3/3 on pages supporting that progress format.
   Retries use the same serial controller and normal operation deadlines;
   waiting Viewers and untried parents receive their opportunities first.
+  A retry may use bounded two-App socket preparation under ADR-0009 before its
+  one Pion connection. The first attempt and Browser-only transport stay ordinary;
+  failed optional preparation cannot disable the App for the session. Socket
+  ownership transfers only after mutual success; cancellation joins workers
+  before freeing their slot.
   It is not a participant capability, route score, or SFU preference. Candidate
   generation and selected-pair diagnostics retain only
   `ordinary | predicted | unknown` provenance.
@@ -119,8 +124,13 @@ deadline or start an independent recovery loop.
 When NAT traversal enhancement is enabled, another operation may use the
 remaining connection-attempt budget after rollback. The waiting display uses the actual
 server-issued attempt ordinal; it never counts time as an attempted connection.
-Committed Browser P2P recovery first restarts ICE on the same connection, then
-rebuilds that connection if necessary, within the existing two-request budget.
+Committed P2P recovery first requests an ICE restart, then requests a rebuild
+if necessary, within the existing two-request budget. A sender without restart
+support, including the current Native sender, replaces its connection on that
+first request.
+The budget belongs to the current parent and survives physical connection or
+Browser/Native backend replacement. Only a connected transport or a new parent
+resets it; replacing an unconnected backend cannot renew recovery indefinitely.
 Capable Native receivers also renegotiate that connection while retaining the
 encoded source, local playback and downstream edges when its codec/audio shape
 is unchanged. Pion owns ICE restart; each actual gathering owns fresh supplemental
@@ -214,6 +224,9 @@ An active configuration describes that connection; it cannot create a replacemen
 Browser subscriber. Replacement needs the controller's prepared subscription and
 first-frame proof. Reauthentication during an unfinished restart also returns
 that subscription to its route owner; sending an answer is not connection proof.
+Retained media keeps its original acquisition opportunity when signaling sessions
+change. Its failure cannot consume a new session's untried opportunity; a new
+physical connection binds the current one. This applies to Peer and SFU edges.
 An exhausted opportunity remains an explicit failure until an eligible new fact
 reopens acquisition. Source capture remains Host-owned throughout.
 
@@ -264,7 +277,8 @@ design. All-UDP-blocked networks currently end in bounded failure.
 App Local mode runs this graph without SFU, NAT prediction, or default STUN.
 One-link mode tunnels only HTTP/WebSocket control and adds public STUN to the
 same Browser/Native P2P edges. Reachable peers form one mixed relay tree; an
-unreachable path adds no route type or score. Site mode uses Site transport.
+unreachable path adds no route type or score. App-enabled Site pages use that
+Site's transport configuration.
 
 A Native Host reserves one loopback edge for Browser preview; it consumes no
 route-copy capacity or gateway mapping. Direct children and the admitted Native

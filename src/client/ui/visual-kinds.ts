@@ -103,6 +103,7 @@ export type Set4Kind =
   | "hint-nat-prediction"
   | "hint-nat-unavailable"
   | "hint-client-local"
+  | "hint-app-ready"
   | "hint-client-site";
 
 export type PlaybackHintKind =
@@ -149,6 +150,7 @@ export type InteractionHintKind =
   | "hint-chat-send"
   | "hint-chat-settings"
   | "hint-chat-export"
+  | "hint-chat-detach"
   | "hint-chat-overlay-show"
   | "hint-chat-overlay-hide";
 

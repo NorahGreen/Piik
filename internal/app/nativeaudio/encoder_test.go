@@ -3,6 +3,7 @@ package nativeaudio
 import (
 	"encoding/binary"
 	"math"
+	"math/rand/v2"
 	"testing"
 
 	gopus "github.com/thesyncim/gopus"
@@ -86,7 +87,7 @@ func TestEncodePreservesAudiblePCM(t *testing.T) {
 }
 
 func TestEncodePreservesStereoSeparation(t *testing.T) {
-	for _, bitrate := range []int{64_000, 128_000, 192_000} {
+	for _, bitrate := range []int{64_000, 128_000, 192_000, 256_000, 320_000} {
 		encoder, err := NewEncoder(bitrate)
 		if err != nil {
 			t.Fatal(err)
@@ -150,13 +151,35 @@ func TestEncoderUpdatesBitrateWithinTheSameGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, bitrate := range []int{64_000, 192_000, DefaultBitrate} {
+	decoder, err := gopus.NewDecoder(gopus.DefaultDecoderConfig(SampleRate, Channels))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pcm := make([]byte, FrameBytes)
+	decoded := make([]int16, FrameSamples*Channels)
+	for _, bitrate := range []int{64_000, 192_000, 256_000, 320_000, 96_000, DefaultBitrate} {
 		if err = encoder.SetBitrate(bitrate); err != nil {
 			t.Fatalf("SetBitrate(%d) = %v", bitrate, err)
 		}
+		if encoder.Bitrate() != bitrate {
+			t.Fatalf("SetBitrate(%d) readback = %d", bitrate, encoder.Bitrate())
+		}
+		packet, err := encoder.Encode(pcm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		count, err := decoder.DecodeInt16(packet, decoded)
+		if err != nil || count != FrameSamples {
+			t.Fatalf("decode after bitrate %d: %d samples, %v", bitrate, count, err)
+		}
 	}
-	if err = encoder.SetBitrate(0); err == nil {
-		t.Fatal("invalid live bitrate was accepted")
+	for _, bitrate := range []int{0, 5_999, 510_001} {
+		if err = encoder.SetBitrate(bitrate); err == nil {
+			t.Fatalf("invalid live bitrate %d was accepted", bitrate)
+		}
+		if encoder.Bitrate() != DefaultBitrate {
+			t.Fatalf("rejected bitrate %d replaced the active setting", bitrate)
+		}
 	}
 }
 
@@ -176,5 +199,56 @@ func TestEncodeSteadyStateAllocationIsBounded(t *testing.T) {
 	})
 	if allocations > 4 {
 		t.Fatalf("steady-state Opus encoding allocated %.1f objects", allocations)
+	}
+}
+
+func TestEncodeBoundsTransientPacketsAcrossBitrateChanges(t *testing.T) {
+	encoder, err := NewEncoder(DefaultBitrate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder, err := gopus.NewDecoder(gopus.DefaultDecoderConfig(SampleRate, Channels))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pcm := make([]byte, FrameBytes)
+	decoded := make([]int16, FrameSamples*Channels)
+	random := rand.New(rand.NewPCG(472, 20261014))
+	for _, bitrate := range []int{DefaultBitrate, MaxSendBitrate, MinBitrate, 12_345, MaxSendBitrate} {
+		if err := encoder.SetBitrate(bitrate); err != nil {
+			t.Fatal(err)
+		}
+		for block := range 100 {
+			for frame := range FrameSamples {
+				for channel := range Channels {
+					sample := 0.0
+					switch (block / 10) % 5 {
+					case 1:
+						sample = 26_000 * math.Sin(2*math.Pi*float64(500+channel*1000)*float64(block*FrameSamples+frame)/SampleRate)
+					case 2:
+						sample = 32_767 * (random.Float64()*2 - 1)
+					case 3:
+						if frame < 10 {
+							sample = 32_767
+						}
+					case 4:
+						sample = float64(32_767 - 65_535*(frame%2))
+					}
+					binary.LittleEndian.PutUint16(pcm[(frame*Channels+channel)*2:], uint16(int16(sample)))
+				}
+			}
+			packet, err := encoder.Encode(pcm)
+			if err != nil {
+				t.Fatalf("encode %d bps block %d: %v", bitrate, block, err)
+			}
+			// Opus RTP cannot fragment a frame. Reserve RTP/extensions/SRTP space.
+			if len(packet)+48 > 1200 {
+				t.Fatalf("%d bps block %d exceeded packet budget: %d payload bytes", bitrate, block, len(packet))
+			}
+			count, err := decoder.DecodeInt16(packet, decoded)
+			if err != nil || count != FrameSamples {
+				t.Fatalf("decode %d bps block %d: %d samples, %v", bitrate, block, count, err)
+			}
+		}
 	}
 }

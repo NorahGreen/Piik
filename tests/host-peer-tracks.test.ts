@@ -1017,7 +1017,7 @@ describe("HostPeer source replacement", () => {
       { iceServers: [] },
       {
         ...QUALITY_PROFILES["720p30"],
-        screenAudioQuality: "very-high",
+        maxAudioBitrate: 192000,
       },
     );
 
@@ -1140,8 +1140,8 @@ describe("HostPeer source replacement", () => {
       peer.updateCaptureProfile(QUALITY_PROFILES["1080p60"]),
     ).resolves.toBe(true);
     expect(senderVideo.applyConstraints).toHaveBeenLastCalledWith({
-      width: { ideal: 1920, max: 1920 },
-      height: { ideal: 1080, max: 1080 },
+      width: { max: 1920 },
+      height: { max: 1080 },
       frameRate: { ideal: 60, max: 60 },
     });
     expect(sourceVideo.applyConstraints).not.toHaveBeenCalled();
@@ -1231,6 +1231,26 @@ describe("HostPeer source replacement", () => {
     expect(connection.senders[1]?.appliedMaxBitrates).toEqual([128_000]);
   });
 
+  it("applies an answer's audio limit on the existing sender without touching video", async () => {
+    const peer = createPeer(createStream(createTrack("video", "video"), createTrack("audio", "audio")),
+      undefined, undefined, { ...QUALITY_PROFILES["720p30"], maxAudioBitrate: 320_000 });
+    await peer.start();
+    const connection = FakePeerConnection.latest!;
+    const videoCalls = connection.senders[0]!.setParameters.mock.calls.length;
+    const audio = connection.senders[1]!;
+    audio.getParameters().codecs = [{ mimeType: "audio/opus", clockRate: 48000, payloadType: 111,
+      sdpFmtpLine: "stereo=1;maxaveragebitrate=192000" }];
+    await peer.acceptSignal({ kind: "description", connectionId: peer.connectionId,
+      description: { type: "answer", sdp: "test-answer" } });
+    await vi.waitFor(() => expect(audio.getParameters().encodings[0]?.maxBitrate).toBe(192_000));
+    expect(connection.senders[0]!.setParameters.mock.calls).toHaveLength(videoCalls);
+    expect(connection.createOfferCallCount).toBe(1);
+    expect(peer.getSnapshot().audioSenderParameters).toMatchObject({
+      requestedMaxBitrate: 320_000, appliedMaxBitrate: 192_000, mismatch: true,
+    });
+    peer.dispose();
+  });
+
   it("updates quality parameters without replacing media tracks", async () => {
     const video = createTrack("video", "video");
     const audio = createTrack("audio", "audio");
@@ -1257,7 +1277,7 @@ describe("HostPeer source replacement", () => {
     await expect(
       peer.updateProfile({
         ...QUALITY_PROFILES["1080p60"],
-        screenAudioQuality: "very-high",
+        maxAudioBitrate: 192000,
       }),
     ).resolves.toBe(true);
     expect(connection.senders[0]?.setParameters).toHaveBeenCalledTimes(3);
@@ -1286,7 +1306,7 @@ describe("HostPeer source replacement", () => {
     await expect(
       peer.updateProfile({
         ...QUALITY_PROFILES["720p30"],
-        screenAudioQuality: "very-high",
+        maxAudioBitrate: 192000,
       }),
     ).resolves.toBe(false);
 
@@ -1299,7 +1319,7 @@ describe("HostPeer source replacement", () => {
     await expect(
       peer.updateProfile({
         ...QUALITY_PROFILES["720p30"],
-        screenAudioQuality: "very-high",
+        maxAudioBitrate: 192000,
       }),
     ).resolves.toBe(true);
     expect(audioSender.getParameters().encodings[0]?.maxBitrate).toBe(192_000);
@@ -1315,14 +1335,14 @@ describe("HostPeer source replacement", () => {
 
     const saver = peer.updateProfile({
       ...QUALITY_PROFILES["720p30"],
-      screenAudioQuality: "saver",
+      maxAudioBitrate: 64000,
     });
     await vi.waitFor(() =>
       expect(audioSender.setParameters).toHaveBeenCalledTimes(2),
     );
     const veryHigh = peer.updateProfile({
       ...QUALITY_PROFILES["720p30"],
-      screenAudioQuality: "very-high",
+      maxAudioBitrate: 192000,
     });
     audioSender.releaseDeferredSetParameters();
 
@@ -3357,7 +3377,7 @@ describe("ViewerRelay downstream ownership", () => {
 
   it("applies the latest profile to the current and future child", async () => {
     const customSettings = {
-      resolution: "1440p",
+      resolution: { width: 2560, height: 1440 },
       maxFramerate: 45,
       maxBitrate: 10_500_000,
       degradationPreference: "balanced",
@@ -3436,7 +3456,7 @@ describe("ViewerRelay downstream ownership", () => {
   it("applies the latest audio ceiling to current and future children", async () => {
     const initialProfile = {
       ...QUALITY_PROFILES["1080p60"],
-      screenAudioQuality: "saver",
+      maxAudioBitrate: 64000,
     } as const;
     const relay = new ViewerRelay(
       { iceServers: [] },
@@ -3460,7 +3480,7 @@ describe("ViewerRelay downstream ownership", () => {
     await expect(
       relay.updateProfile({
         ...initialProfile,
-        screenAudioQuality: "very-high",
+        maxAudioBitrate: 192000,
       }),
     ).resolves.toBe(true);
     expect(firstConnection.senders[1]?.appliedMaxBitrates).toEqual([

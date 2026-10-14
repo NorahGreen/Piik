@@ -23,8 +23,8 @@ const (
 	captureStopTimeout  = time.Second
 	maxPreviewBytes     = 192 * 1024
 	maxOutputs          = 6
-	minOutputBitrate    = 1_000 // Codec rate APIs use whole kbps.
-	maxOutputBitrate    = 12_000_000
+	minOutputBitrate    = 1_000       // Codec rate APIs use whole kbps.
+	MaxVideoBitrate     = 240_000_000 // H.264 Level 5.2 Constrained Baseline video bitrate.
 	maxSources          = 1024
 	maxSourceTitleBytes = 4096
 	// Leave room for the control envelope within loopback's 256 KiB message.
@@ -88,9 +88,8 @@ type OutputProfile struct {
 }
 
 func (profile OutputProfile) Valid() bool {
-	return ValidVideoSize(profile.Width, profile.Height) &&
-		profile.Framerate >= 1 && profile.Framerate <= 60 &&
-		profile.Bitrate >= minOutputBitrate && profile.Bitrate <= maxOutputBitrate
+	return ValidVideoFormat(profile.Width, profile.Height, profile.Framerate) &&
+		profile.Bitrate >= minOutputBitrate && profile.Bitrate <= MaxVideoBitrate
 }
 
 // ScreenShareOutputs follows LiveKit 2.22.1's screen-share simulcast construction,
@@ -99,7 +98,7 @@ func ScreenShareOutputs(profile VideoProfile) []OutputProfile {
 	return []OutputProfile{
 		{
 			Width: profile.Width / 4 * 2, Height: profile.Height / 4 * 2,
-			Framerate: profile.Framerate, Bitrate: max(150_000, profile.Bitrate/4),
+			Framerate: profile.Framerate, Bitrate: min(profile.Bitrate, max(150_000, profile.Bitrate/4)),
 		},
 		{
 			Width: profile.Width, Height: profile.Height,
@@ -109,13 +108,10 @@ func ScreenShareOutputs(profile VideoProfile) []OutputProfile {
 }
 
 func (profile VideoProfile) Valid() bool {
-	validResolution :=
-		(profile.Width == 854 && profile.Height == 480) ||
-			(profile.Width == 1280 && profile.Height == 720) ||
-			(profile.Width == 1920 && profile.Height == 1080) ||
-			(profile.Width == 2560 && profile.Height == 1440)
-	return validResolution && profile.Framerate >= 15 && profile.Framerate <= 60 &&
-		profile.Bitrate >= 2_000_000 && profile.Bitrate <= 12_000_000 &&
+	// The source ceiling must also yield a valid half-size output. Preset labels
+	// belong to the UI, not the capture process's numeric resource boundary.
+	return ValidVideoFormat(profile.Width, profile.Height, profile.Framerate) && profile.Width >= 4 && profile.Height >= 4 &&
+		profile.Bitrate >= 100_000 && profile.Bitrate <= MaxVideoBitrate &&
 		validVideoPreference(profile.Preference)
 }
 

@@ -3,17 +3,18 @@ package mediaedge
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/netip"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/TNTcraftHIM/Piik/internal/app/portmapping"
 	"github.com/TNTcraftHIM/Piik/internal/diagnostics"
+	"github.com/TNTcraftHIM/Piik/internal/media/forwarding"
 	"github.com/pion/ice/v4"
-	"github.com/pion/stun/v3"
+	"github.com/pion/stun/v4"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/sync/singleflight"
 )
@@ -32,6 +33,7 @@ type iceSocket struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	closeOnce   sync.Once
+	punchedPeer *net.UDPAddr
 }
 
 func (engine *Engine) newICESocket(servers []webrtc.ICEServer, mapping bool) (*iceSocket, error) {
@@ -41,13 +43,22 @@ func (engine *Engine) newICESocket(servers []webrtc.ICEServer, mapping bool) (*i
 	if err != nil {
 		return nil, errors.New("native media UDP socket is unavailable")
 	}
+	return engine.adoptICESocket(connection, servers, mapping)
+}
+
+// Adoption happens before the one PeerConnection is constructed. Discovery and
+// media then keep this exact socket, including any authenticated punched tuple.
+func (engine *Engine) adoptICESocket(connection net.PacketConn, servers []webrtc.ICEServer, mapping bool) (*iceSocket, error) {
 	ctx, cancel := context.WithCancel(engine.ctx)
 	socket := &iceSocket{
 		engine: engine, ctx: ctx, cancel: cancel,
 		localPort: connection.LocalAddr().(*net.UDPAddr).Port,
-		mux: ice.NewUDPMuxDefault(ice.UDPMuxParams{
+		mux: forwarding.NewUDPMux(ice.UDPMuxParams{
 			Logger: diagnostics.PionLoggerFactory().NewLogger("piik-ice"), UDPConn: connection,
 		}),
+	}
+	if prepared, ok := connection.(*PunchedSocket); ok {
+		socket.punchedPeer = prepared.remote
 	}
 	if engine.portMapping && mapping && len(stunServers(servers)) > 0 {
 		socket.portMapping = portmapping.Start(socket.localPort)
@@ -79,6 +90,16 @@ func (socket *iceSocket) newPeerConnection() (*webrtc.PeerConnection, error) {
 	).NewPeerConnection(webrtc.Configuration{})
 }
 
+func (socket *iceSocket) addPunchedPeer(connection *webrtc.PeerConnection) error {
+	if socket.punchedPeer == nil {
+		return nil
+	}
+	mid := "0"
+	return connection.AddICECandidate(webrtc.ICECandidateInit{SDPMid: &mid,
+		Candidate: fmt.Sprintf("candidate:sp0 1 udp 1694498815 %s %d typ srflx", socket.punchedPeer.IP, socket.punchedPeer.Port),
+	})
+}
+
 func (socket *iceSocket) close() {
 	if socket == nil {
 		return
@@ -100,6 +121,8 @@ func (socket *iceSocket) close() {
 type mappedAddress struct {
 	address string
 	port    int
+	// One-based position in the requested STUN list, independent of response order.
+	serverIndex int
 }
 
 func (socket *iceSocket) surveySTUN(
@@ -113,8 +136,11 @@ func (socket *iceSocket) surveySTUN(
 	resolver := net.DefaultResolver
 	results := make(chan mappedAddress)
 	var pending sync.WaitGroup
+	index := 0
 	for _, server := range servers {
 		for _, rawURL := range server.URLs {
+			index++
+			serverIndex := index
 			uri, err := stun.ParseURI(rawURL)
 			if err != nil || uri.Scheme != stun.SchemeTypeSTUN ||
 				uri.Proto != stun.ProtoTypeUDP || uri.Port < 1 || uri.Port > 65_535 {
@@ -143,7 +169,7 @@ func (socket *iceSocket) surveySTUN(
 					"localPort", socket.localPort, "mappedAddress", diagnostics.ID(mapped.IP.String()), "mappedPort", mapped.Port,
 					"durationMs", time.Since(started).Milliseconds())
 				select {
-				case results <- mappedAddress{address: mapped.IP.String(), port: mapped.Port}:
+				case results <- mappedAddress{address: mapped.IP.String(), port: mapped.Port, serverIndex: serverIndex}:
 				case <-surveyContext.Done():
 				}
 			}()
@@ -153,18 +179,14 @@ func (socket *iceSocket) surveySTUN(
 		pending.Wait()
 		close(results)
 	}()
-	seen := map[string]struct{}{}
 	for {
 		select {
 		case value, ok := <-results:
 			if !ok {
 				return
 			}
-			key := value.address + ":" + strconv.Itoa(value.port)
-			if _, found := seen[key]; found {
-				continue
-			}
-			seen[key] = struct{}{}
+			// The consumer selects survey destinations before deduplicating
+			// mappings. An ordinary response must not hide a survey observation.
 			emit(value)
 		case <-surveyContext.Done():
 			return

@@ -8,7 +8,6 @@ import {
   type FormEvent,
 } from "react";
 import {
-  DEFAULT_QUALITY_SETTINGS,
   DEFAULT_ROUTE_POLICY,
   MAX_VIEWER_PASSWORD_LENGTH,
   viewerPasswordSchema,
@@ -53,7 +52,7 @@ import type { ComicKind } from "../components/living/Comic";
 import type { HintKind } from "../ui/visual-kinds";
 import type { ComicTone } from "../components/living/comic-presentation";
 import { Tooltip } from "../components/living/Tooltip";
-import { QualityPresets } from "../components/living/QualityPresets";
+import { AudioBitrateControl, PicturePreferenceControl, QualityPresets, ResolutionControl, VideoRateControls } from "../components/living/QualityPresets";
 import { RoomCodeInput, RoomCodeError } from "../components/living/RoomCodeInput";
 import { MetricCell } from "../components/living/Metrics";
 import {
@@ -75,7 +74,7 @@ import {
   SwitchItem,
 } from "../components/living/primitives";
 import { hasPeerRouteEvidence } from "../components/status-badge-model";
-import { Glyph, type GlyphName } from "../ui/icons";
+import { Glyph } from "../ui/icons";
 import { say, useCopy, type CopyKey } from "../ui/copy";
 import { resolveMediaFailure, type MediaFailure } from "../ui/media-failure";
 import {
@@ -89,6 +88,8 @@ import {
   saveCreationProfile,
   type HostCreationProfile,
 } from "../lib/creation-profile";
+import { readPreferredQuality, savePreferredQuality } from "../lib/quality-preference";
+import { AppQualityPreference } from "../native/quality-preference";
 import { createOpaqueId } from "../lib/opaque-id";
 import { debugError, debugEvent, debugOperation } from "../lib/debug";
 import {
@@ -102,6 +103,7 @@ import { deriveHostStatus, deriveParticipantStatus, type HostPhase } from "../ui
 import {
   clearHostRoom,
   getStableClientId,
+  isClientActivated,
   type HostRoomIdentity,
   type HostRoomState,
   mergeAuthenticatedHostRoom,
@@ -125,18 +127,17 @@ import {
   type BrowserCaptureSource,
   matchingQualityProfileId,
   QUALITY_PROFILES,
-  DEGRADATION_PREFERENCE_KEYS,
-  QUALITY_RESOLUTIONS,
+  videoCaptureLimits,
+  captureFramerateCeiling,
+  supportsCaptureProfile,
+  qualityResolutionEqual,
   qualitySettingsEqual,
   qualitySettingsLabel,
-  resolveScreenAudioQuality,
-  SCREEN_AUDIO_BITRATES,
+  screenAudioBitrate,
+  MAX_SCREEN_AUDIO_BITRATE,
   setMediaPaused,
   videoQualitySettingsEqual,
-  type DegradationPreference,
-  type QualityResolution,
   type QualitySettings,
-  type ScreenAudioQuality,
 } from "../media/quality";
 import { HostSfuRoute } from "../media/host-sfu-route";
 import { BrowserEncodingPool } from "../media/browser-encoding-pool";
@@ -213,30 +214,6 @@ type NoticeValue = (
 };
 
 type StatusNoticeMessage = string | { key: CopyKey; vars?: Record<string, string>; failureCode?: string };
-
-const PREFERENCE_PRESENTATION: Record<
-  DegradationPreference,
-  { icon: GlyphName; hint: CopyKey }
-> = {
-  "maintain-resolution": {
-    icon: "mountain",
-    hint: "host.advanced.preference.resolutionHint",
-  },
-  balanced: {
-    icon: "balance",
-    hint: "host.advanced.preference.balancedHint",
-  },
-  "maintain-framerate": {
-    icon: "frames",
-    hint: "host.advanced.preference.framerateHint",
-  },
-};
-
-const AUDIO_QUALITY_CAPTIONS: Record<ScreenAudioQuality, CopyKey> = {
-  saver: "host.advanced.audio.saver",
-  music: "host.advanced.audio.music",
-  "very-high": "host.advanced.audio.veryHigh",
-};
 
 type ViewerQualityEvidence = Extract<
   ServerMessage,
@@ -347,7 +324,6 @@ interface HostPageProps {
   sfuAvailable?: boolean;
   sfuOnly?: boolean;
   natPredictionAvailable?: boolean;
-  connectionAttemptProgress4?: boolean;
   launchedByClient?: boolean;
   onAuthorizationRequired?: () => void;
 }
@@ -370,17 +346,16 @@ export function HostPage({
   sfuAvailable = false,
   sfuOnly = false,
   natPredictionAvailable = false,
-  connectionAttemptProgress4 = false,
   launchedByClient = false,
   onAuthorizationRequired,
 }: HostPageProps = {}) {
   const copy = useCopy();
   const { lang, vis, t, titleFrames } = copy;
   const [qualitySettings, setQualitySettings] = useState<QualitySettings>(
-    DEFAULT_QUALITY_SETTINGS,
+    readPreferredQuality,
   );
   const [advancedQuality, setAdvancedQuality] = useState<QualitySettings>(
-    DEFAULT_QUALITY_SETTINGS,
+    qualitySettings,
   );
   const [routePolicy, setRoutePolicy] = useState<RoutePolicy>(
     () => ({
@@ -610,7 +585,10 @@ export function HostPage({
   const sourceSwitchRef = useRef<{ replacingVideo?: MediaStreamTrack; audioOnly?: boolean } | null>(null);
   const qualityChangeRef = useRef<object | null>(null);
   const pendingQualityChangeRef = useRef<QualitySettings | null>(null);
-  const qualitySettingsRef = useRef<QualitySettings>(DEFAULT_QUALITY_SETTINGS);
+  const qualitySettingsRef = useRef<QualitySettings>(qualitySettings);
+  const appQualityPreferenceRef = useRef<AppQualityPreference | null>(null);
+  const qualityPreferenceEditedRef = useRef(false);
+  const pendingAppQualityPreferenceRef = useRef<QualitySettings | null>(null);
   const routePolicyRef = useRef<RoutePolicy>(routePolicy);
   const advancedQualityRef = useRef<QualitySettings>(advancedQuality);
   const videoCodecModeRef = useRef<BrowserVideoCodecMode>(videoCodecMode);
@@ -623,7 +601,7 @@ export function HostPage({
   const retiringStreamRef = useRef<MediaStream | null>(null);
   const hostSfuRouteRef = useRef<HostSfuRoute | null>(null);
   const nativeClientRef = useRef<NativeClient | null>(null);
-  const nativeClientConnectRef = useRef<Promise<NativeClient | null> | null>(null);
+  const nativeClientConnectRef = useRef<{ promise: Promise<NativeClient | null>; controller: AbortController } | null>(null);
   const nativeShareGenerationRef = useRef<string | null>(null);
   const serverShareGenerationRef = useRef<string | null>(null);
   const nativeMediaBridgeRef = useRef<NativeMediaBridge | null>(null);
@@ -665,6 +643,18 @@ export function HostPage({
     phase === "live" && resolvedVideoCodec
       ? resolvedVideoCodec
       : videoCodecMode;
+
+  useEffect(() => {
+    if (!launchedByClient) return;
+    const controller = new AbortController();
+    void loadAppQualityPreference(controller.signal).catch(error => {
+      if (!controller.signal.aborted) debugError("native", "quality-preference-load-failed", error);
+    });
+    return () => {
+      controller.abort();
+      appQualityPreferenceRef.current = null;
+    };
+  }, [launchedByClient]);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -757,6 +747,7 @@ export function HostPage({
       disposeNativeShare();
       nativeClientCloseCleanupRef.current?.();
       nativeClientCloseCleanupRef.current = null;
+      nativeClientConnectRef.current?.controller.abort();
       nativeClientConnectRef.current = null;
       nativeClientRef.current?.close();
       nativeClientRef.current = null;
@@ -890,6 +881,7 @@ export function HostPage({
   }
 
   function disposeResources(notifyServer: boolean, keepRoomSession = false): void {
+    closeCaptureSourcePicker();
     sourceSwitchRef.current = null;
     qualityChangeRef.current = null;
     pendingQualityChangeRef.current = null;
@@ -1013,7 +1005,6 @@ export function HostPage({
     }
     activeGenerationRef.current = null;
     generationRef.current += 1;
-    closeCaptureSourcePicker();
     const currentRoom = roomRef.current;
     if (notifyServer && currentRoom) {
       writePreferredRoom(currentRoom.roomId);
@@ -1021,6 +1012,21 @@ export function HostPage({
     disposeResources(notifyServer, keepRoomSession);
     setStatusNotice(message, comic, tone);
     setPhase("ended");
+  }
+
+  function endRoomSession(
+    message: StatusNoticeMessage,
+    comic: ComicKind,
+    tone: ComicTone = "bad",
+    idlePhase: "error" | "ended" = "error",
+  ): void {
+    if (activeGenerationRef.current !== null) {
+      endSharing(message, false, comic, tone, false);
+    } else {
+      disposeResources(false);
+      setStatusNotice(message, comic, tone);
+      setPhase(idlePhase);
+    }
   }
 
   async function replaceCurrentRoom(): Promise<void> {
@@ -1042,6 +1048,10 @@ export function HostPage({
         profile.roomPassword,
       );
       const replacement = hostRoomFromCreated(response);
+      if (roomMutationRef.current !== mutation) {
+        closeAbandonedRoom(replacement);
+        return;
+      }
       if (wasSharing) {
         endSharing({ key: "host.roomReplaced" }, false, "share-ended", "off", false);
       } else if (signalRef.current) {
@@ -1052,6 +1062,7 @@ export function HostPage({
         replacement,
         () => roomMutationRef.current === mutation,
       ))) {
+        closeAbandonedRoom(replacement);
         throw new Error("Host room is already open in another tab");
       }
       writePreferredRoom(replacement.roomId);
@@ -1066,6 +1077,7 @@ export function HostPage({
       }
       setPhase(wasSharing ? "ended" : "idle");
     } catch (error) {
+      if (roomMutationRef.current !== mutation) return;
       if (error instanceof ApiError && error.status === 404) {
         if (!wasSharing) {
           // A memory-only room can disappear after a server restart.
@@ -1092,6 +1104,7 @@ export function HostPage({
               replacement,
               () => roomMutationRef.current === mutation,
             ))) {
+              closeAbandonedRoom(replacement);
               throw new Error("Host room is already open in another tab");
             }
             writePreferredRoom(replacement.roomId);
@@ -1105,14 +1118,12 @@ export function HostPage({
             setPhase("idle");
             return;
           } catch (replacementError) {
-            setNoticeError(replacementError, "room");
+            if (roomMutationRef.current === mutation) setNoticeError(replacementError, "room");
             return;
           }
         }
         if (forgetRoom(activeRoom)) {
-          // endSharing already stated the recovery path; the raw room error
-          // would only overwrite it with the same 404 in server wording.
-          endSharing({ key: "host.roomInvalid" }, false, "room-not-found", "bad", false);
+          endRoomSession({ key: "host.roomInvalid" }, "room-not-found");
           return;
         }
       }
@@ -1323,6 +1334,7 @@ export function HostPage({
     nativeClientCloseCleanupRef.current = client.onClose(() => {
       if (nativeClientRef.current !== client) return;
       nativeClientRef.current = null;
+      nativeClientConnectRef.current?.controller.abort();
       nativeClientConnectRef.current = null;
       nativeClientCloseCleanupRef.current = null;
       if (nativeSourceRequestRef.current) {
@@ -1342,16 +1354,18 @@ export function HostPage({
       nativeClientCloseCleanupRef.current?.();
       nativeClientCloseCleanupRef.current = null;
       nativeClientRef.current = null;
+      nativeClientConnectRef.current?.controller.abort();
       nativeClientConnectRef.current = null;
     }
     client.close();
   }
 
   function acquireNativeClient(): Promise<NativeClient | null> {
-    if (nativeClientConnectRef.current) return nativeClientConnectRef.current;
-    const connecting: Promise<NativeClient | null> = nativeShareCleanupRef.current.then(() =>
+    if (nativeClientConnectRef.current) return nativeClientConnectRef.current.promise;
+    const controller = new AbortController();
+    const promise: Promise<NativeClient | null> = nativeShareCleanupRef.current.then(() =>
       nativeClientConnectRef.current === connecting
-        ? nativeClientRef.current ?? NativeClient.connect()
+        ? nativeClientRef.current ?? NativeClient.connect({ signal: controller.signal })
         : null,
     ).catch((error) => {
       debugError("native", "discovery-failed", error);
@@ -1367,8 +1381,9 @@ export function HostPage({
     }).finally(() => {
       if (nativeClientConnectRef.current === connecting) nativeClientConnectRef.current = null;
     });
+    const connecting = { promise, controller };
     nativeClientConnectRef.current = connecting;
-    return connecting;
+    return promise;
   }
 
   function releaseUnusedNativeClient(): void {
@@ -1376,6 +1391,7 @@ export function HostPage({
     // needs to keep it after startup. Merely visiting the page owns no session.
     if (nativeSourceRequestRef.current || nativeShareGenerationRef.current ||
       (activeGenerationRef.current !== null && roomMutationRef.current !== null)) return;
+    nativeClientConnectRef.current?.controller.abort();
     nativeClientConnectRef.current = null;
     const client = nativeClientRef.current;
     if (client) discardNativeClient(client);
@@ -1397,7 +1413,7 @@ export function HostPage({
     const request = {};
     nativeSourceRequestRef.current = request;
     nativeSourcePathRef.current = null;
-    if (!launchedByClient || (phase === "live" && !nativeModeRef.current)) {
+    if (!isClientActivated() || (phase === "live" && !nativeModeRef.current)) {
       setNativeSources({ kind: "browser" });
       return;
     }
@@ -1602,13 +1618,39 @@ export function HostPage({
     setAdvancedQuality(visibleSettings);
   }
 
-  function changeScreenAudioQuality(
-    screenAudioQuality: ScreenAudioQuality,
+  function rememberQuality(settings: QualitySettings): void {
+    const preference = appQualityPreferenceRef.current;
+    if (preference) preference.save(settings);
+    else {
+      pendingAppQualityPreferenceRef.current = settings;
+      savePreferredQuality(settings);
+    }
+  }
+
+  async function loadAppQualityPreference(signal: AbortSignal): Promise<void> {
+    const initial = qualitySettingsRef.current;
+    const preference = await AppQualityPreference.connect(signal);
+    if (!preference || signal.aborted) return;
+    appQualityPreferenceRef.current = preference;
+    // An explicit choice made during discovery wins, even before permission resolves.
+    const pending = pendingAppQualityPreferenceRef.current;
+    pendingAppQualityPreferenceRef.current = null;
+    if (pending) preference.save(pending);
+    const saved = await preference.read();
+    if (!signal.aborted && saved && supportsCaptureProfile(saved) && !qualityPreferenceEditedRef.current &&
+      qualitySettingsRef.current === initial && activeGenerationRef.current === null &&
+      roomMutationRef.current === null) {
+      commitQuality(saved);
+    }
+  }
+
+  function changeMaxAudioBitrate(
+    maxAudioBitrate: number,
   ): void {
     if (phase === "starting") {
       return;
     }
-    const next = { ...advancedQualityRef.current, screenAudioQuality };
+    const next = { ...advancedQualityRef.current, maxAudioBitrate };
     void changeQuality(next);
   }
 
@@ -1640,6 +1682,13 @@ export function HostPage({
   }
 
   async function changeQuality(nextProfile: QualitySettings): Promise<void> {
+    if (!supportsCaptureProfile(nextProfile, videoLimits, audioBitrateCeiling)) {
+      advancedQualityRef.current = qualitySettingsRef.current;
+      setAdvancedQuality(qualitySettingsRef.current);
+      setNoticeError(new Error("Capture quality is not supported by this implementation"), "quality");
+      return;
+    }
+    qualityPreferenceEditedRef.current = true;
     advancedQualityRef.current = nextProfile;
     setAdvancedQuality(nextProfile);
     if (phase !== "live") {
@@ -1647,6 +1696,7 @@ export function HostPage({
         return;
       }
       commitQuality(nextProfile);
+      rememberQuality(nextProfile);
       return;
     }
     if (qualityChangeRef.current) {
@@ -1683,11 +1733,11 @@ export function HostPage({
       nextProfile,
     );
     const captureChanged =
-      previousProfile.resolution !== nextProfile.resolution ||
+      !qualityResolutionEqual(previousProfile.resolution, nextProfile.resolution) ||
       previousProfile.maxFramerate !== nextProfile.maxFramerate;
     const audioChanged =
-      resolveScreenAudioQuality(previousProfile.screenAudioQuality) !==
-      resolveScreenAudioQuality(nextProfile.screenAudioQuality);
+      screenAudioBitrate(previousProfile.maxAudioBitrate) !==
+      screenAudioBitrate(nextProfile.maxAudioBitrate);
     try {
       const nativeClient = nativeClientRef.current;
       const nativeShareGeneration = nativeShareGenerationRef.current;
@@ -1718,6 +1768,7 @@ export function HostPage({
       }
 
       commitQuality(appliedProfile);
+      rememberQuality(appliedProfile);
       debugEvent("quality", "committed", { generation, applied: appliedProfile });
       outcome = "applied";
       if (nativeUpdate) {
@@ -1777,7 +1828,7 @@ export function HostPage({
             : null;
         const successNotice =
           audioChanged && !videoChanged
-            ? say("host.notice.audioSet", { label: say(AUDIO_QUALITY_CAPTIONS[resolveScreenAudioQuality(nextProfile.screenAudioQuality)]) })
+            ? say("host.notice.audioSet", { kbps: String(screenAudioBitrate(nextProfile.maxAudioBitrate) / 1_000) })
             : videoChanged && audioChanged
               ? say("host.notice.qualityApplied")
               : say("host.notice.qualitySet", {
@@ -2049,6 +2100,7 @@ export function HostPage({
                 events,
                 videoCodecRef.current.primary,
                 nativeMediaIngressRef.current?.source,
+                (candidate.connectionAttempt?.current ?? 1) > 1,
               );
             }
           : undefined,
@@ -2120,7 +2172,7 @@ export function HostPage({
     const peerEvents: {
       sendSignal: (
         targetPeerId: string,
-        payload: Extract<SignalPayload, { kind: "description" | "candidate" }>,
+        payload: SignalPayload,
       ) => boolean;
       onUpdate: (snapshot: PeerSnapshot) => void;
     } = {
@@ -2477,7 +2529,6 @@ export function HostPage({
         qualitySettings: qualitySettingsRef.current,
         routePolicy: routePolicyRef.current,
         viewerPresence: true,
-        ...(connectionAttemptProgress4 ? { connectionAttemptProgress4: true } : {}),
         displayName: initialDisplayName,
       },
       {
@@ -2488,24 +2539,12 @@ export function HostPage({
         },
         onTerminated: (reason) => {
           if (signalRef.current !== signal || !isCurrentRoomAuthority(activeRoom)) return;
-          if (activeGenerationRef.current !== null) {
-            endSharing({ key: hostTerminationKey(reason) }, false, "signal-failed", "bad", false);
-          } else {
-            disposeResources(false);
-            setStatusNotice({ key: hostTerminationKey(reason) }, "signal-failed", "bad");
-            setPhase("error");
-          }
+          endRoomSession({ key: hostTerminationKey(reason) }, "signal-failed");
           if (reason === "SESSION_REPLACED") forgetRoom(activeRoom, true);
         },
         onAccessRequired: () => {
           if (signalRef.current !== signal || !isCurrentRoomAuthority(activeRoom)) return;
-          if (activeGenerationRef.current !== null) {
-            endSharing({ key: "gate.expired" }, false, "access-denied", "bad", false);
-          } else {
-            disposeResources(false);
-            setStatusNotice({ key: "gate.expired" }, "access-denied", "bad");
-            setPhase("error");
-          }
+          endRoomSession({ key: "gate.expired" }, "access-denied");
           onAuthorizationRequired?.();
         },
         onMessage: (message) => {
@@ -2529,8 +2568,7 @@ export function HostPage({
               // Capture may still be awaiting permission. Its ready path owns
               // creation/publication; room recovery must not start it early.
               if (!localShareActive) {
-                setStatusNotice({ key: "host.roomInvalid" }, "room-not-found", "bad");
-                setPhase("error");
+                endRoomSession({ key: "host.roomInvalid" }, "room-not-found");
               }
               return;
             }
@@ -2542,35 +2580,16 @@ export function HostPage({
           }
           if (message.type === "error" && message.code === "INVALID_TOKEN") {
             forgetRoom(activeRoom);
-            if (localShareActive) {
-              endSharing({ key: "host.roomInvalid" }, false, "room-not-found", "bad", false);
-            } else {
-              disposeResources(false);
-              forgetRoom(activeRoom);
-              setStatusNotice({ key: "host.roomInvalid" }, "room-not-found", "bad");
-              setPhase("error");
-            }
+            endRoomSession({ key: "host.roomInvalid" }, "room-not-found");
             return;
           }
           if (message.type === "room-closed") {
             if (!forgetRoom(activeRoom)) return;
-            if (localShareActive) {
-              endSharing({ key: "host.roomClosed" }, false, "room-closed", "off", false);
-            } else {
-              disposeResources(false);
-              setStatusNotice({ key: "host.roomClosed" }, "room-closed", "off");
-              setPhase("ended");
-            }
+            endRoomSession({ key: "host.roomClosed" }, "room-closed", "off", "ended");
             return;
           }
           if (message.type === "error" && message.code === "HOST_ALREADY_CONNECTED") {
-            if (localShareActive) {
-              endSharing(hostServerErrorNotice(message.code), false, "signal-failed", "bad", false);
-            } else {
-              disposeResources(false);
-              setStatusNotice(hostServerErrorNotice(message.code), "signal-failed", "bad");
-              setPhase("error");
-            }
+            endRoomSession(hostServerErrorNotice(message.code), "signal-failed");
             return;
           }
           const reauthenticated =
@@ -3241,7 +3260,8 @@ export function HostPage({
       onAuthorizationRequired?.();
     }
     if (error instanceof ApiError && error.status === 404) {
-      forgetRoom(activeRoom);
+      if (forgetRoom(activeRoom)) endRoomSession({ key: "host.roomInvalid" }, "room-not-found");
+      return;
     }
     if (!isCurrentRoomAuthority(activeRoom) && roomRef.current !== null) {
       return;
@@ -3547,10 +3567,16 @@ export function HostPage({
   const titleContent = titleFrames(hostStatus.titleFrameKey);
   useDocumentTitle([room?.roomId, titleContent.label, hostStatus.titleMarker], titleContent.variations,
     `${lang}:${vis}:${hostStatus.titleFrameKey}:${room?.roomId ?? ""}`);
+  const audioBitrateCeiling = Math.min(MAX_SCREEN_AUDIO_BITRATE, nativeActive
+    ? nativeClientRef.current?.health.nativeMedia.maxAudioBitrate ?? MAX_SCREEN_AUDIO_BITRATE
+    : MAX_SCREEN_AUDIO_BITRATE);
+  const videoLimits = videoCaptureLimits(nativeActive ? nativeClientRef.current?.health.nativeMedia : undefined);
 
   return (
     <div className="lr-app">
       <AppHeader
+        atHome
+        showAppConnection={!sourcePickerOpen}
         led={
           <LedStrip
             state={hostStatus.connection.tone}
@@ -3599,6 +3625,9 @@ export function HostPage({
                 onPreview={loadNativeSourcePreview}
                 onRefresh={openCaptureSourcePicker}
                 onCancel={closeCaptureSourcePicker}
+                onAppConnected={phase !== "live" ? () => {
+                  if (nativeSourceRequestRef.current) void openCaptureSourcePicker();
+                } : undefined}
                 browserAvailable={!nativeActive && !!navigator.mediaDevices?.getDisplayMedia}
                 cameraAvailable={!nativeActive && !!navigator.mediaDevices?.getUserMedia}
                 selectionDisabled={roomMutating || switchingSource || changingQuality}
@@ -3780,146 +3809,28 @@ export function HostPage({
           </div>
           <SharingSettings id="host-advanced-door" open={showAdvanced} busy={changingQuality}
             presets={
-              <QualityPresets selected={selectedQualityProfileId} busy={changingQuality}
+              <QualityPresets selected={selectedQualityProfileId} limits={videoLimits} busy={changingQuality}
                 disabled={phase === "starting" || switchingSource}
                 onSelect={id => void changeQuality({ ...QUALITY_PROFILES[id],
-                  screenAudioQuality: resolveScreenAudioQuality(advancedQualityRef.current.screenAudioQuality),
+                  maxAudioBitrate: screenAudioBitrate(advancedQualityRef.current.maxAudioBitrate),
                 })} />
             }
             picture={<>
-              <div className="lr-door-group">
-                <span
-                  className="lr-door-glyph"
-                >
-                  <Glyph name="expand" size={19} />
-                  <Cap k="host.advanced.resolution" />
-                </span>
-                <div
-                  className="lr-row-group"
-                  role="group"
-                  aria-label={t("host.advanced.resolution")}
-                >
-                  {(
-                    Object.keys(QUALITY_RESOLUTIONS) as QualityResolution[]
-                  ).map((resolution) => (
-                    <Chip
-                      key={resolution}
-                      selected={advancedQuality.resolution === resolution}
-                      disabled={phase === "starting" || switchingSource}
-                      title={QUALITY_RESOLUTIONS[resolution].label}
-                      hint="hint-quality"
-                      onClick={() =>
-                        changeAdvancedQuality({ resolution })
-                      }
-                    >
-                      {QUALITY_RESOLUTIONS[resolution].label}
-                    </Chip>
-                  ))}
-                </div>
-              </div>
-              <div className="lr-sharing-limits">
-                <div className="lr-door-group">
-                  <span
-                    className="lr-door-glyph"
-                  >
-                    <Glyph name="frames" size={19} />
-                    <Cap k="host.advanced.framerate" />
-                  </span>
-                  <Tooltip kind="hint-metric-fps" text={vis ? undefined : t("host.advanced.framerate")} className="lr-slider-hint">
-                    <span className="lr-slider">
-                      <input
-                        type="range"
-                        min={15}
-                        max={60}
-                        step={5}
-                        value={advancedQuality.maxFramerate}
-                        disabled={phase === "starting" || switchingSource}
-                        aria-label={t("host.advanced.framerate")}
-                        onChange={(event) =>
-                          changeAdvancedQuality({
-                            maxFramerate: Number(event.target.value),
-                          })
-                        }
-                      />
-                      <output>{advancedQuality.maxFramerate} fps</output>
-                    </span>
-                    </Tooltip>
-                </div>
-                <div className="lr-door-group">
-                  <span
-                    className="lr-door-glyph"
-                  >
-                    <Glyph name="gauge" size={19} />
-                    <Cap k="host.advanced.bitrate" />
-                  </span>
-                  <Tooltip kind="hint-metric-bitrate" text={vis ? undefined : t("host.advanced.bitrate")} className="lr-slider-hint">
-                    <span className="lr-slider">
-                      <input
-                        type="range"
-                        min={2000000}
-                        max={12000000}
-                        step={500000}
-                        value={advancedQuality.maxBitrate}
-                        disabled={phase === "starting" || switchingSource}
-                        aria-label={t("host.advanced.bitrate")}
-                        onChange={(event) =>
-                          changeAdvancedQuality({
-                            maxBitrate: Number(event.target.value),
-                          })
-                        }
-                      />
-                      <output>
-                        {(advancedQuality.maxBitrate / 1_000_000).toFixed(1)}{" "}
-                        Mbps
-                      </output>
-                    </span>
-                    </Tooltip>
-                </div>
-              </div>
-              <div className="lr-door-group">
-                <span
-                  className="lr-door-glyph"
-                >
-                  <Glyph name="mountain" size={19} />
-                  <Cap k="host.advanced.preference" />
-                </span>
-                <div
-                  className="lr-row-group"
-                  role="group"
-                  aria-label={t("host.advanced.preference")}
-                >
-                  {(
-                    Object.keys(
-                      PREFERENCE_PRESENTATION,
-                    ) as DegradationPreference[]
-                  ).map((preference) => (
-                    <Chip
-                      key={preference}
-                      name="degradationPreference"
-                      value={preference}
-                      selected={
-                        advancedQuality.degradationPreference === preference
-                      }
-                      disabled={phase === "starting" || switchingSource}
-                      title={`${t(DEGRADATION_PREFERENCE_KEYS[preference])} · ${t(PREFERENCE_PRESENTATION[preference].hint)}`}
-                      hint={preference === "maintain-resolution" ? "hint-prefer-resolution" : preference === "maintain-framerate" ? "hint-prefer-framerate" : "hint-degrade-pref"}
-                      onClick={() =>
-                        changeAdvancedQuality({
-                          degradationPreference: preference,
-                        })
-                      }
-                    >
-                      <Glyph
-                        name={PREFERENCE_PRESENTATION[preference].icon}
-                        size={18}
-                      />
-                      <Cap k={DEGRADATION_PREFERENCE_KEYS[preference]} />
-                    </Chip>
-                  ))}
-                </div>
-              </div>
+              <ResolutionControl value={advancedQuality.resolution} limits={videoLimits}
+                disabled={phase === "starting" || switchingSource}
+                onChange={resolution => changeAdvancedQuality({ resolution,
+                  maxFramerate: Math.min(advancedQualityRef.current.maxFramerate, captureFramerateCeiling(resolution, videoLimits)),
+                })} />
+              <VideoRateControls value={advancedQuality} limits={videoLimits}
+                disabled={phase === "starting" || switchingSource} onChange={changeAdvancedQuality} />
+              <PicturePreferenceControl value={advancedQuality.degradationPreference}
+                disabled={phase === "starting" || switchingSource}
+                onChange={degradationPreference => changeAdvancedQuality({ degradationPreference })} />
             </>}
             audio={<>
+              <AudioBitrateControl value={screenAudioBitrate(advancedQuality.maxAudioBitrate)}
+                max={audioBitrateCeiling} disabled={phase === "starting" || switchingSource}
+                onChange={changeMaxAudioBitrate} />
               {phase === "live" && nativeActive && nativeSourceSelectionRef.current?.target.kind === "display" &&
                 nativeClientRef.current?.health.nativeMedia.microphone && nativeClientRef.current.health.nativeMedia.processAudioExclusion ? (
                 <div className="lr-door-group lr-source-audio-settings">
@@ -3956,48 +3867,6 @@ export function HostPage({
                   onVoiceProcessing={enabled => void changeMicrophone(microphoneEnabled, microphoneDevices.browser, enabled)}
                 />
               ) : null}
-              <div className="lr-door-group">
-                <span
-                  className="lr-door-glyph"
-                >
-                  <Glyph name="speaker" size={19} />
-                  <Cap k="host.advanced.audio" />
-                </span>
-                <div
-                  className="lr-row-group"
-                  role="group"
-                  aria-label={t("host.advanced.audio")}
-                >
-                  {(
-                    Object.keys(
-                      AUDIO_QUALITY_CAPTIONS,
-                    ) as ScreenAudioQuality[]
-                  ).map((audioQuality) => (
-                    <Chip
-                      key={audioQuality}
-                      selected={
-                        resolveScreenAudioQuality(
-                          advancedQuality.screenAudioQuality,
-                        ) === audioQuality
-                      }
-                      disabled={phase === "starting" || switchingSource}
-                      title={t("host.audio.title", {
-                        label: t(AUDIO_QUALITY_CAPTIONS[audioQuality]),
-                        kbps: String(
-                          SCREEN_AUDIO_BITRATES[audioQuality] / 1_000,
-                        ),
-                      })}
-                      hint="hint-audio-quality"
-                      onClick={() => changeScreenAudioQuality(audioQuality)}
-                    >
-                      <Cap k={AUDIO_QUALITY_CAPTIONS[audioQuality]} />
-                      <small className="lr-audio-rate">
-                        {SCREEN_AUDIO_BITRATES[audioQuality] / 1_000}
-                      </small>
-                    </Chip>
-                  ))}
-                </div>
-              </div>
             </>}
             technical={<>
               <div className="lr-door-group">

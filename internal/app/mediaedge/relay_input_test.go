@@ -10,8 +10,12 @@ import (
 	"github.com/TNTcraftHIM/Piik/internal/app/nativecapture"
 	"github.com/TNTcraftHIM/Piik/internal/media/encoded"
 	"github.com/livekit/livekit-server/pkg/sfu"
+	"github.com/pion/ice/v4"
+	"github.com/pion/interceptor"
+	"github.com/pion/logging"
 	"github.com/pion/rtp"
 	"github.com/pion/rtp/codecs"
+	"github.com/pion/transport/v5/vnet"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -56,9 +60,9 @@ func TestRelayInputKeepsRecoveryAndEmitsACompleteQuietFrame(t *testing.T) {
 }
 
 func TestRelayInputRejectsUnsafeH264Configuration(t *testing.T) {
-	// Locally generated Constrained Baseline SPS: ID 0 is 4096x2160; ID 1 is
+	// Generated Constrained Baseline SPS: ID 0 is 5120x2880; ID 1 is
 	// 160x90. A decoder may use either, regardless of which arrived last.
-	const oversized = "6742c033dc0100010fb016a02020280000030008000003001478c19c"
+	const oversized = "6742c034da0050005a64"
 	const small = "6742c015570a37e4c05a8303035280000003008000000301478b17c0"
 	for _, test := range []struct {
 		name string
@@ -106,9 +110,18 @@ func TestRelayH264AllocationBounds(t *testing.T) {
 		{"1440p", "6742c033da00a002d640", 2560, 1440},
 		{"padded-1080p", "6742c033da01e0089f95", 1920, 1080},
 		{"portrait-within-bound", "6742c033da01100b5e5d", 1080, 1440},
-		{"4k", "6742c033da00f0010f90", 0, 0},
-		{"portrait-overflow", "6742c033da008701e190", 0, 0},
-		{"padded-4k", "6742c033da00f00111f894", 0, 0},
+		{"4k", "6742c033da00f0010f90", 3840, 2160},
+		{"portrait-4k", "6742c033da008701e190", 2160, 3840},
+		{"level-5.2-4k", "6742c034da00f0010f90", 3840, 2160},
+		{"level-5.2-portrait-4k", "6742c034da008701e190", 2160, 3840},
+		{"level-5.2-dci", "6742c034da0040004864", 4096, 2304},
+		{"level-5.2-ultrawide", "6742c034da005000b590", 5120, 1440},
+		{"level-5.2-portrait-ultrawide", "6742c034da0168028190", 1440, 5120},
+		{"padded-4k", "6742c033da00f00111f894", 3840, 2160},
+		{"4k-reference-buffer-limit", "6742c033f300780087c8", 3840, 2160},
+		{"4k-reference-buffer-overflow", "6742c033f380780087c8", 0, 0},
+		{"level-5.2-reference-buffer-overflow", "6742c034f380780087c8", 0, 0},
+		{"level-5.2-cropped-storage-overflow", "6742c034da00f001e1f8034940", 0, 0},
 		{"large-cropped-storage", "6742c033da00f001e1f8034940", 0, 0},
 		{"crop-overflow", "6742c033da0a37e000000300100000030004", 0, 0},
 		{"coded-size-overflow", "6742c033da000003000040000003000d90", 0, 0},
@@ -172,9 +185,27 @@ func TestLargeRecoveryUsesTheDefaultPacketWindow(t *testing.T) {
 	if len(packets) <= 500 || len(packets) > encoded.MaxPacketWindow {
 		t.Fatal("fixture does not exercise the packet window boundary")
 	}
+	// Isolate packet-window capacity from host UDP receive-buffer overflow.
+	// The production sender, SRTP transport and frame assembler still run here.
+	router, err := vnet.NewRouter(&vnet.RouterConfig{CIDR: "10.0.0.0/24",
+		QueueSize: encoded.MaxPacketWindow, LoggerFactory: logging.NewDefaultLoggerFactory()})
+	check(err)
+	sendNet, err := vnet.NewNet(&vnet.NetConfig{StaticIPs: []string{"10.0.0.1"}})
+	check(err)
+	receiveNet, err := vnet.NewNet(&vnet.NetConfig{StaticIPs: []string{"10.0.0.2"}})
+	check(err)
+	check(router.AddNet(sendNet))
+	check(router.AddNet(receiveNet))
+	check(router.Start())
+	defer router.Stop()
 	engine, err := NewEngine(EngineOptions{BindAddress: "127.0.0.1:0", IncludeLoopback: true, InitialBitrate: 12_000_000})
 	check(err)
 	defer engine.Close()
+	engine.listenPacket = sendNet.ListenPacket
+	engine.bindAddress = "10.0.0.1:0"
+	engine.settings.SetNet(sendNet)
+	engine.settings.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
+	engine.settings.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
 	source, err := engine.NewSource("h264", 1, 1, nil)
 	check(err)
 	defer source.Close()
@@ -183,7 +214,17 @@ func TestLargeRecoveryUsesTheDefaultPacketWindow(t *testing.T) {
 	edge, err := engine.NewEdge(source, EdgeOptions{ConnectionID: "large-recovery"})
 	check(err)
 	defer edge.Close()
-	receiver := newReceiver(t)
+	media := &webrtc.MediaEngine{}
+	check(media.RegisterDefaultCodecs())
+	registry := &interceptor.Registry{}
+	check(webrtc.RegisterDefaultInterceptors(media, registry))
+	settings := webrtc.SettingEngine{}
+	settings.SetNet(receiveNet)
+	settings.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
+	settings.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	receiver, err := webrtc.NewAPI(webrtc.WithMediaEngine(media), webrtc.WithInterceptorRegistry(registry),
+		webrtc.WithSettingEngine(settings)).NewPeerConnection(webrtc.Configuration{})
+	check(err)
 	defer receiver.Close()
 	var complete atomic.Bool
 	receiver.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {

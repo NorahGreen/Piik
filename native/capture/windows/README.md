@@ -33,7 +33,7 @@ unavailable instead of failing the whole source. Process loopback is probed by
 activation rather than inferred from a Windows build number; display sources
 normally use the standard render-device loopback available on Windows 10 and
 later. The optional `--capture-audio exclude <pid> <creation-time>` mode requires
-build 19041+ and a successful exclusion-mode probe. Windows 10 isolation still
+a successful exclusion-mode probe, without an additional OS-version gate. Windows 10 isolation still
 needs physical verification; see the [audio evidence](../../../docs/research/native-client-media.md#windows-audio-exclusion).
 It captures all output devices
 except the selected process tree, and retires when that process exits. The
@@ -83,7 +83,10 @@ the old fixed one-frame VBV override is removed so later bitrate increases are
 not trapped by the original buffer limit.
 
 The build caches the pinned WebRTC SDK and matching official MSVC linker/runtime
-libraries under `build/encoder-pool`. The SDK supplies libvpx, replacing the
+libraries under `build/encoder-pool`. A newer installed MSVC keeps its own linker
+and runtime; older installations use that pinned minimum, following
+[Microsoft's binary compatibility rule](https://learn.microsoft.com/en-us/cpp/porting/binary-compat-2015-2017).
+The SDK supplies libvpx, replacing the
 separate source build. Only statically linked code and required notices enter
 the package, not the SDK/toolchain or another runtime service.
 

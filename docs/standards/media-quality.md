@@ -18,7 +18,9 @@ contract. [Status](../status.md) indexes delivery and remaining acceptance.
   latter uses one supported native codec path and never infers a target from
   a title. An ordinary Web Host does not probe localhost.
 - Camera is a peer source choice in the same picker, including on phones. Only
-  the chosen source requests permission. Browser/camera Host microphone capture
+  the chosen source requests permission. Camera input and thumbnails request
+  an uncropped device format; sender constraints own later scaling.
+  Browser/camera Host microphone capture
   is explicit and defaults to Browser voice processing, separately from screen audio.
   The Host may turn that processing off for music or virtual audio inputs;
   the input change preserves the existing mixed output and leaves the previous
@@ -42,6 +44,12 @@ contract. [Status](../status.md) indexes delivery and remaining acceptance.
   frame matches its desktop source dimensions. Other frames retain their own
   aspect ratio. This changes only the encoded presentation, never the game or
   display settings; vendor-private scaling is not inferred.
+- Windows and Linux outputs preserve source presentation aspect within the
+  selected ceiling, rounded to even dimensions. Small sources are not enlarged
+  to a fixed landscape canvas. Windows uses its existing converter; Linux uses
+  GStreamer's size negotiation. Source resizing does not create a new room or
+  route, and frame envelopes carry actual output dimensions. Network adaptation
+  remains owned by the existing media framework.
 - Windows SDR conversion owns one output color contract: limited-range BT.601
   NV12 with matching H.264 metadata. RGB capture and decoded video retain their
   input range/matrix through conversion and relay scaling; dimensions do not
@@ -75,7 +83,9 @@ contract. [Status](../status.md) indexes delivery and remaining acceptance.
   not intentionally stop capture, encoding, or upload.
 - Live quality changes update the current capture and Host sender-track
   constraints plus sender ceilings without reopening source selection or
-  replacing a healthy route.
+  replacing a healthy route. Shared Browser capture constraints express size
+  ceilings, not ideal dimensions or a fixed aspect ratio: lowering a ceiling
+  must not request a crop, and source orientation remains Browser-owned.
 - Native quality changes use the same room settings. The App prepares a new
   platform capture/encoder generation, then replaces the old generation behind
   the same encoded source and PeerConnections; audio-only changes update the
@@ -101,6 +111,17 @@ contract. [Status](../status.md) indexes delivery and remaining acceptance.
 
 ## Video Profiles
 
+The Host remembers explicitly applied picture and source-audio quality settings.
+Browser-only use stores them per origin. An App-opened page uses the running,
+authorized App's optional preference store when available, including across
+temporary public-link origins; older or unavailable Apps retain Browser storage.
+These preferences seed a new page, never an active share. Explicit edits and
+authoritative room recovery win over a late preference read. Failed or superseded
+changes and server snapshots do not replace the preference; pending saves retain
+only the latest applied choice. Storage failure never fails capture or startup.
+This does not retain capture permission, device/session identity, routing policy
+or microphone activation, and reading settings claims no Native media session.
+
 The three recommended profiles are ceilings, not delivery guarantees:
 
 | Profile | Target | Video bitrate ceiling |
@@ -109,13 +130,34 @@ The three recommended profiles are ceilings, not delivery guarantees:
 | `1080p30` | 1920x1080 at 30 fps | 5 Mbps |
 | `1080p60` | 1920x1080 at 60 fps | 8 Mbps |
 
-`1080p30` is the default. Advanced resolution includes 480p, 720p, 1080p, and
-1440p; frame rate, bitrate, and `maintain-resolution | balanced |
-maintain-framerate` remain independent controls. Display video uses the standard
+`1080p30` is the default. The 2.0 contract carries numeric width/height ceilings;
+480p, 720p, 1080p, 1440p and 4K are UI shortcuts. Advanced picture settings also
+accept custom even dimensions within the combined implementation bounds below.
+Width and height form one applied edit. A size change caps the requested frame
+rate in the same quality operation when the larger size requires a lower limit.
+Larger wire-valid requests do not
+authorize an adapter to exceed its local capture, codec or allocation limits.
+Numeric requests use representational bounds rather than the current control
+ranges. Current capture admits integer 1..240 fps and 0.1..240 Mbps, further
+limited by picture size. Advanced controls accept typed values alongside sliders;
+the three recommended profiles and default remain unchanged. These are useful
+product controls, not universal codec
+limits or a minimum for framework-driven output. Codec and resource budgets
+apply separately. App descriptions may advertise stronger capabilities;
+controls use their intersection with local support. An unsupported request is
+an operation failure, not malformed signaling. An unsupported saved preference
+does not seed capture or overwrite its stored value with a fallback.
+Derived outputs must stay within their source bitrate ceiling, including when
+that ceiling is below a usual lower-output floor. Codec preflight must observe
+real encoded progress; cadence tolerance alone cannot make zero output pass.
+Frame rate, bitrate, and `maintain-resolution | balanced |
+maintain-framerate` retain their controls. Display video uses the standard
 `contentHint = "motion"` for game motion.
 Native H264 retains Constrained Baseline. Capture validates the coding-tool subset under
 RFC 6184, including equivalent Constrained Baseline constraint bytes, and reports
 the actual SPS profile/level; one vendor's byte spelling is not the contract.
+The platform encoder selects its level from the requested format. Validate the
+actual supported level instead of forcing a calculated minimum into the encoder.
 Native ingress and relay accept only a negotiated profile/packetization compatible
 with their unchanged encoded downstream source. A codec name alone is not enough;
 same-source renegotiation must preserve that boundary before altering the live peer.
@@ -123,6 +165,29 @@ Received picture summaries are not decoder allocation limits. Before Native
 derivation, validate every H.264 sequence parameter set's supported format,
 coded storage and visible crop; a later small descriptor cannot authorize earlier
 large input.
+
+Candidate capture admits even dimensions up to 8192 per axis and 36,864
+16x16 macroblocks per picture, including alignment. Its shared codec budget
+follows H.264 Level 5.2: 2,073,600 macroblocks per second and a 240 Mbps video
+bitrate ceiling; capture scheduling is separately bounded at 240 fps.
+This admits 1080p240, 1440p144, 5120x1440 at 60 fps and landscape/portrait
+4K60. It does not admit a full 8K picture. Decoder alignment has a
+separate coded-storage bound; reference-picture storage is bounded before
+Native derivation. These are admission limits, not a device performance promise.
+App discovery reports size, pixel-count, frame-rate and bitrate limits through the
+existing native health description. Controls use the intersection with local
+implementation limits; a remote claim cannot raise those limits. Whole-route
+and physical-device acceptance remain separate from available controls.
+Use platform decoder defaults for internal provisioning, rather than turning
+independent axis ceilings into a maximum-square preallocation. Encoded input
+and actual output storage remain bounded before use.
+
+Quality observations have independent numeric bounds. A valid capacity estimate
+above the requested send rate remains evidence; invalid optional measurements
+become unavailable. Invalid Native quality samples are discarded without closing
+media control. Required identity, generation and state evidence must still pass
+before a sample can influence route decisions. SFU encoding descriptions likewise
+do not grant resources: the SFU admits supported formats before allocating them.
 
 Framework-driven downscaling under bandwidth or device pressure is valid within
 the selected degradation preference. A low decoded resolution alone is not a
@@ -154,6 +219,10 @@ its resources even when a Browser operation remains pending. The result stays
 fixed for the current share and is reconsidered for a new share.
 ADR-0007 owns probe and negotiation mechanics.
 
+Codec selection preserves the negotiated repair stream associated with the
+selected primary codec. Native and SFU receivers use standard Pion RTX/NACK;
+codec restrictions must not strip recovery or disable SRTP replay protection.
+
 The Browser chooses the concrete encoder implementation. A reported H.264 codec
 does not by itself prove hardware acceleration, and Web content cannot select a
 specific MFT, NVENC, AMF, or QSV implementation.
@@ -171,8 +240,10 @@ dropper, with the Browser probe's warmup, one-second sample and 100 ms lag
 allowance. Cold-start lag is excluded from the measured window; the selection
 deadline still bounds warmup and hardware input/output waits. A candidate whose
 measured delivery falls outside that allowance is rejected and the next candidate
-is tried within the four-second budget. The probe retires before the live encoder
-is prepared and proved, so selection requires only one hardware session at a time.
+is tried within the four-second budget. A measured frame deficit beyond that
+allowance ends the probe immediately: remaining frames cannot change its result.
+The probe retires before the live encoder is prepared and proved, so selection
+requires only one hardware session at a time.
 Without a sustaining candidate, Auto starts the ordinary VP8 path directly, as manual VP8 does. A
 faster software encode never replaces a sustaining H264 encoder. Encoder readiness
 uses Media Foundation events rather than timer-based polling.
@@ -239,7 +310,9 @@ bitrate still follows the Host ceiling; ordinary fallback restores its picture
 sender limits. Preparation and applied-budget completion re-evaluate pending
 membership immediately; accepting a recovery frame still commits the handoff.
 The first eligible consumer follows the same path; unsupported APIs or failed
-pooling use ordinary senders. Prepared ordinary quality candidates, Native
+pooling use ordinary senders. Negotiated codec incompatibility retires only
+that connection's pool membership; healthy siblings keep their producers.
+Prepared ordinary quality candidates, Native
 ingress and Browser SFU remain independent compositions.
 
 Each ordinary Browser PeerConnection owns stock WebRTC congestion control and
@@ -325,10 +398,33 @@ application-defined whole-room lowest-common-denominator target.
 
 ## Screen Audio
 
-Display audio uses `contentHint = "music"`. The live sender ceilings are 64,
-128, and 192 kbps with 128 kbps default. Browser and Native Peer answers request
-Opus stereo and a 192 kbps receive ceiling, including renegotiation. These are
-local receive preferences, independent of the offer's receive preferences.
+Piik supports mono and stereo Opus content through the existing audio
+track. Mono inputs remain valid; Browser and Native mixing use a stereo output.
+A stereo receive preference or two-channel declaration does not prove distinct
+source channels. [Fidelity evidence](../research/media-fidelity.md#stereo) owns
+decoded-channel checks. Surround delivery is outside the current scope; it needs
+capture, channel-layout, mixing, codec and playback support, not only a channel
+count setting.
+
+Display audio uses `contentHint = "music"`. 2.0 keeps 64/128/192 kbps
+shortcuts and the 128 kbps default, with a custom numeric ceiling in the same
+sound settings. Current Browser/native senders support 6..320 kbps; the numeric
+wire format uses Opus's 6..510 kbps bounds independently of those shortcuts.
+The native 20 ms encoder also bounds each Opus payload to 1152 bytes, leaving
+48 bytes for RTP/extensions/SRTP within a 1200-byte datagram. An average bitrate
+ceiling alone does not bound VBR peaks; Opus RTP keeps each encoded frame intact.
+A request above the current sender's bitrate ceiling fails that operation
+without retiring native control.
+An audio-only update retains capture, media connections and video startup state.
+
+Browser, Native and SFU receive answers request Opus stereo and the full Opus
+receive range, including renegotiation. Browser senders enforce a smaller
+negotiated receive limit on their own encoding, falling back to libwebrtc's
+mode-dependent default when no valid limit is declared. Native/SFU unchanged forwarding
+requires a receiver that can accept the shared source's full range; a smaller
+or undeclared limit rejects that edge before binding, without reducing the source or
+its healthy siblings. An omitted preference does not mean unrestricted reception.
+These receive preferences are independent of the offer's receive preferences.
 The SFU publication uses stereo, DTX disabled, and RED
 disabled; this accepts less burst-loss resilience in exchange for bounded
 publisher traffic. The Browser and source still decide whether an audio track

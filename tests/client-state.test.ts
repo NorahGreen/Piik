@@ -12,7 +12,6 @@ import {
   authenticateSiteAccess,
   createRoom,
   getSiteAccess,
-  getOptionalRuntimeCapabilities,
   replaceOwnedRoom,
   updateRoomAccess,
 } from "../src/client/lib/api.ts";
@@ -63,34 +62,6 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   setCopy({ lang: "zh", vis: false });
-});
-
-describe("optional Viewer capability discovery", () => {
-  it("returns supported progress and tolerates an unavailable or malformed descriptor", async () => {
-    for (const [body, status, expected] of [
-      [{ connectionAttemptProgress4: true }, 200, true],
-      [{}, 200, undefined],
-      [{}, 503, undefined],
-      [{ connectionAttemptProgress4: 4 }, 200, undefined],
-    ] as const) {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status })));
-      expect((await getOptionalRuntimeCapabilities())?.connectionAttemptProgress4).toBe(expected);
-    }
-  });
-
-  it("abandons stalled discovery without preventing viewing", async () => {
-    vi.useFakeTimers();
-    let observed: AbortSignal | undefined;
-    vi.stubGlobal("fetch", vi.fn((_url: string, options: RequestInit) => new Promise((_resolve, reject) => {
-      observed = options.signal!;
-      observed.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
-    })));
-    const discovery = getOptionalRuntimeCapabilities();
-    await vi.advanceTimersByTimeAsync(2_000);
-    await expect(discovery).resolves.toBeNull();
-    expect(observed?.aborted).toBe(true);
-    expect(vi.getTimerCount()).toBe(0);
-  });
 });
 
 function routeAuthenticated(
@@ -1724,15 +1695,15 @@ describe("client signaling recovery policy", () => {
     });
     const shareGeneration = "share_generation_12345678";
     const initialQuality = {
-      resolution: "1080p",
+      resolution: { width: 1920, height: 1080 },
       maxFramerate: 30,
       maxBitrate: 5_000_000,
       degradationPreference: "balanced",
-      screenAudioQuality: "music",
+      maxAudioBitrate: 128000,
     } as const;
     const firstPending = {
       ...initialQuality,
-      resolution: "720p",
+      resolution: { width: 1280, height: 720 },
       maxBitrate: 3_000_000,
     } as const;
     const latestPending = {
@@ -2041,11 +2012,11 @@ describe("client signaling recovery policy", () => {
         sfuPublicationGeneration: null,
       },
       qualitySettings: {
-        resolution: "1080p",
+        resolution: { width: 1920, height: 1080 },
         maxFramerate: 30,
         maxBitrate: 5_000_000,
         degradationPreference: "balanced",
-        screenAudioQuality: "music",
+        maxAudioBitrate: 128000,
       },
       routePolicy: DEFAULT_ROUTE_POLICY,
     });

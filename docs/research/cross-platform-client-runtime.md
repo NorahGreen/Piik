@@ -53,9 +53,10 @@ The App and Hosted Piik run the same server core, so the local package is
 one executable carrying the built Browser assets plus the optional capture and
 tunnel sidecars; [the App README](../../cmd/piik-app/README.md) owns
 that layout. In Local mode the App runs the server in its own process with
-explicit local configuration. In Site mode it starts no server, and the system
-Browser opens the saved Site while the same process remains its loopback
-native-media owner. The system Browser remains the UI.
+explicit local configuration. While waiting for an approved Site it starts no
+room server; the same process remains the Site's loopback native-media owner.
+The persistent launcher owns local approval and room startup independently.
+The system Browser remains the UI.
 
 Official Go process APIs require every started child to be waited and provide a
 bounded `WaitDelay` for cancellation and stuck I/O. That guidance now covers the
@@ -167,9 +168,11 @@ the existing 30-second startup budget. This affects HTTP/WebSocket control only;
 media routes, tunnel identity and ordered shutdown keep their existing owners.
 DNS failures, API rejection and networks blocking both transports can still fail.
 The preceding Quick Tunnel allocation is a single HTTPS request with a 15-second
-dependency timeout; failure exits before transport fallback applies. The App's
-pre-readiness exit message and exit code do not identify that cause. Match the
-same run's `public-tunnel` dependency diagnostics before classifying a report.
+dependency timeout; failure exits before transport fallback applies. The exit
+code alone does not identify that cause. An abnormal exit now retains the latest
+sanitized dependency error or plain stderr detail in the existing failure result.
+This is the last reported observation, not a classification or a complete log;
+match the same run's `public-tunnel` diagnostics when the detail is insufficient.
 Piik retries a child that exits before readiness, up to four starts with a
 one-second pause between starts, all within the same 30-second acquisition
 deadline. The previous child, output readers and temporary config retire before
@@ -189,6 +192,21 @@ and [protocol fallback](https://github.com/cloudflare/cloudflared/blob/2026.8.3/
 own the dependency behavior. An early-exit fixture confirms fourth-start recovery
 and bounded exhaustion; these checks do not identify a reporter's API or network
 failure or guarantee four starts when earlier attempts consume the deadline.
+
+A 2026-10-08 Windows check against a deliberately refused local allocation API
+confirmed that cloudflared 2026.8.3 emits its final allocation error as plain
+stderr even with `--output json`. A JSON-only error reader therefore misses it.
+The process boundary retains that detail without changing retries or shutdown;
+normal cancellation still stays clean, and late cleanup cannot erase an already
+observed failure. The launcher applies its existing redaction and display limit.
+
+The public App log in [#452](https://github.com/TNTcraftHIM/Piik/issues/452),
+reviewed on 2026-10-07, records a QUIC timeout followed by a TCP port-7844
+connect timeout within that deadline. Thus fallback ran; the report does not
+establish a local port-80/443 collision. Its accelerator dependency remains a
+network-path hypothesis requiring the same endpoint with/without the accelerator.
+The attachment contains no capture start, so it cannot diagnose the separately
+reported H.264 failure.
 
 [HTTP 1033](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1033/)
 means Cloudflare cannot find a healthy tunnel connector. App readiness requires

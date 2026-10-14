@@ -72,6 +72,71 @@ func TestCreateRoomReleasesLockWhenDerivationOrCommitPanics(t *testing.T) {
 	}
 }
 
+func TestPasswordPreparationDoesNotBlockAnotherRoom(t *testing.T) {
+	for _, update := range []bool{false, true} {
+		t.Run(fmt.Sprintf("update=%v", update), func(t *testing.T) {
+			started, release := make(chan struct{}), make(chan struct{})
+			var hold atomic.Bool
+			var releaseOnce sync.Once
+			unblock := func() { releaseOnce.Do(func() { close(release) }) }
+			t.Cleanup(unblock)
+			store, err := room.New(room.Options{
+				MaxRooms: 3, MaxViewersPerRoom: 1,
+				Random: func(size int) []byte {
+					// Hold the existing salt source in the unlocked password phase.
+					if hold.CompareAndSwap(true, false) {
+						close(started)
+						<-release
+					}
+					return bytes.Repeat([]byte{byte(size)}, size)
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := &Server{store: store}
+			original, err := server.CreateRoom(protocol.CodeEntryOpen, nil, "1234")
+			if err != nil {
+				t.Fatal(err)
+			}
+			hold.Store(true)
+			done := make(chan error, 1)
+			go func() {
+				password := "room-password"
+				var err error
+				if update {
+					_, err = server.UpdateRoomAccess(original.RoomID, original.HostToken,
+						protocol.SetViewerPasswordRequest{Password: &password})
+				} else {
+					_, err = server.CreateRoom(protocol.CodeEntryPrivate, &password, "2345")
+				}
+				done <- err
+			}()
+			select {
+			case <-started:
+			case <-time.After(defaultWait):
+				t.Fatal("password preparation did not start")
+			}
+			if !server.mu.TryLock() {
+				t.Fatal("password work blocks signaling for other rooms")
+			}
+			server.mu.Unlock()
+			if _, err := server.CreateRoom(protocol.CodeEntryOpen, nil, "3456"); err != nil {
+				t.Fatalf("independent room creation: %v", err)
+			}
+			unblock()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("password operation: %v", err)
+				}
+			case <-time.After(defaultWait):
+				t.Fatal("password operation did not finish")
+			}
+		})
+	}
+}
+
 func TestStopSharingDoesNotWriteRoomAuthority(t *testing.T) {
 	database, err := room.NewDatabase(filepath.Join(t.TempDir(), "rooms.sqlite"))
 	if err != nil {
@@ -946,16 +1011,15 @@ func isMediaReady(entry presenceEntry) bool {
 // ---------------------------------------------------------------------------
 
 type presenceOptions struct {
-	connectionAttemptProgress4 bool
-	displayName                string
-	viewerPresence             bool
-	viewerPassword             string
-	codeOnly                   bool
-	sharingPaused              *bool
-	qualitySettings            map[string]any
-	routePolicy                *protocol.RoutePolicy
-	roomSession                bool
-	roomOnly                   bool
+	displayName     string
+	viewerPresence  bool
+	viewerPassword  string
+	codeOnly        bool
+	sharingPaused   *bool
+	qualitySettings map[string]any
+	routePolicy     *protocol.RoutePolicy
+	roomSession     bool
+	roomOnly        bool
 }
 
 // authenticate ports the authenticate() helper. relayCapacity -1 is the TS
@@ -977,9 +1041,6 @@ func authenticate(
 		"roomId":   rm.RoomID,
 		"role":     role,
 		"clientId": clientID,
-	}
-	if presence.connectionAttemptProgress4 {
-		message["connectionAttemptProgress4"] = true
 	}
 	if role == protocol.RoleHost {
 		message["token"] = rm.HostToken
@@ -1311,51 +1372,31 @@ func TestSignalDeliversOnlySelfHostedAuxiliaryNatStunEndpoints(t *testing.T) {
 // lifecycle and restart
 // ---------------------------------------------------------------------------
 
-func TestConnectionAttemptProgressIsNegotiatedForEachRecipient(t *testing.T) {
-	for _, hostSupport := range []bool{false, true} {
-		for _, viewerSupport := range []bool{false, true} {
-			t.Run(fmt.Sprintf("host=%t/viewer=%t", hostSupport, viewerSupport), func(t *testing.T) {
-				h := startHarness(t, harnessOptions{
-					natPredictionEnabled: true,
-					stunURLs:             []string{"stun:share.example.test:3478"},
-				})
-				host, viewer := openClient(t, h), openClient(t, h)
-				policy := protocol.RoutePolicy{PeerOnly: true, NatPrediction: true}
-				authenticate(t, host, h.room, protocol.RoleHost, "progress-host", 1, "progress_share_generation_12345678",
-					presenceOptions{routePolicy: &policy, connectionAttemptProgress4: hostSupport})
-				authenticate(t, viewer, h.room, protocol.RoleViewer, "progress-viewer", 0, "",
-					presenceOptions{connectionAttemptProgress4: viewerSupport})
-				for current := 1; current <= 4; current++ {
-					hostPrepare, viewerPrepare := nextPreparedRoute(t, host), nextPreparedRoute(t, viewer)
-					for _, recipient := range []struct {
-						update  routeUpdate
-						support bool
-					}{
-						{hostPrepare, hostSupport}, {viewerPrepare, viewerSupport},
-					} {
-						decoded, err := protocol.DecodeServerMessage(recipient.update.raw)
-						if err != nil {
-							t.Fatal(err)
-						}
-						progress := decoded.(protocol.RouteUpdatePrepareMessage).Candidate.ConnectionAttempt
-						if recipient.support {
-							if progress == nil || *progress != (protocol.ConnectionAttempt{Current: protocol.Int(current), Total: 4}) {
-								t.Fatalf("new reader progress = %+v", progress)
-							}
-						} else if progress != nil {
-							t.Fatalf("old reader received unsupported progress: %+v", progress)
-						}
-					}
-					if hostPrepare.Candidate.ConnectionID != viewerPrepare.Candidate.ConnectionID {
-						t.Fatal("reader capability changed the actual candidate")
-					}
-					viewer.sendJSON(map[string]any{
-						"type": "route-failed", "phase": "prepare",
-						"revision": viewerPrepare.Revision, "connectionId": viewerPrepare.Candidate.ConnectionID,
-					})
-				}
-			})
+func TestConnectionAttemptProgressMatchesBothRecipients(t *testing.T) {
+	h := startHarness(t, harnessOptions{natPredictionEnabled: true,
+		stunURLs: []string{"stun:share.example.test:3478"}})
+	host, viewer := openClient(t, h), openClient(t, h)
+	policy := protocol.RoutePolicy{PeerOnly: true, NatPrediction: true}
+	authenticate(t, host, h.room, protocol.RoleHost, "progress-host", 1, "progress_share_generation_12345678",
+		presenceOptions{routePolicy: &policy})
+	authenticate(t, viewer, h.room, protocol.RoleViewer, "progress-viewer", 0, "", presenceOptions{})
+	for current := 1; current <= 4; current++ {
+		hostPrepare, viewerPrepare := nextPreparedRoute(t, host), nextPreparedRoute(t, viewer)
+		for _, update := range []routeUpdate{hostPrepare, viewerPrepare} {
+			decoded, err := protocol.DecodeServerMessage(update.raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			progress := decoded.(protocol.RouteUpdatePrepareMessage).Candidate.ConnectionAttempt
+			if progress == nil || *progress != (protocol.ConnectionAttempt{Current: protocol.Int(current), Total: 4}) {
+				t.Fatalf("progress = %+v", progress)
+			}
 		}
+		if hostPrepare.Candidate.ConnectionID != viewerPrepare.Candidate.ConnectionID {
+			t.Fatal("recipients disagree on the candidate")
+		}
+		viewer.sendJSON(map[string]any{"type": "route-failed", "phase": "prepare",
+			"revision": viewerPrepare.Revision, "connectionId": viewerPrepare.Candidate.ConnectionID})
 	}
 }
 
@@ -2365,13 +2406,13 @@ func TestSignalRetainsAuthoritativePauseWhenReconnectingHostAdvertisesUnpaused(t
 func TestSignalBindsNewShareQualityAndPreservesActiveShareQualityAcrossReconnect(t *testing.T) {
 	h := startHarness(t, harnessOptions{})
 	initialSettings := map[string]any{
-		"resolution":            "1440p",
+		"resolution":            protocol.QualityResolution{Width: 2560, Height: 1440},
 		"maxFramerate":          60,
 		"maxBitrate":            8_000_000,
 		"degradationPreference": "maintain-resolution",
-		"screenAudioQuality":    "very-high",
+		"maxAudioBitrate":       192000,
 	}
-	initialJSON := `{"resolution":"1440p","maxFramerate":60,"maxBitrate":8000000,"degradationPreference":"maintain-resolution","screenAudioQuality":"very-high"}`
+	initialJSON := `{"resolution":{"width":2560,"height":1440},"maxFramerate":60,"maxBitrate":8000000,"degradationPreference":"maintain-resolution","maxAudioBitrate":192000}`
 	firstGeneration := "first_share_generation_12345678"
 	viewer := openClient(t, h)
 	authenticate(t, viewer, h.room, protocol.RoleViewer, "quality-viewer-client", 1, "", presenceOptions{})
@@ -2383,13 +2424,13 @@ func TestSignalBindsNewShareQualityAndPreservesActiveShareQualityAcrossReconnect
 	expectEqual(t, viewer.next("quality-settings").raw, `{"type":"quality-settings","qualitySettings":`+initialJSON+`}`)
 
 	reconnectSettings := map[string]any{
-		"resolution":            "480p",
+		"resolution":            protocol.QualityResolution{Width: 854, Height: 480},
 		"maxFramerate":          15,
 		"maxBitrate":            2_000_000,
 		"degradationPreference": "maintain-framerate",
-		"screenAudioQuality":    "saver",
+		"maxAudioBitrate":       64000,
 	}
-	reconnectJSON := `{"resolution":"480p","maxFramerate":15,"maxBitrate":2000000,"degradationPreference":"maintain-framerate","screenAudioQuality":"saver"}`
+	reconnectJSON := `{"resolution":{"width":854,"height":480},"maxFramerate":15,"maxBitrate":2000000,"degradationPreference":"maintain-framerate","maxAudioBitrate":64000}`
 	reconnectedHost := openClient(t, h)
 	reconnectedAuth := authenticate(t, reconnectedHost, h.room, protocol.RoleHost, "quality-host-client", 1, firstGeneration,
 		presenceOptions{qualitySettings: reconnectSettings})
@@ -2400,13 +2441,13 @@ func TestSignalBindsNewShareQualityAndPreservesActiveShareQualityAcrossReconnect
 	}
 
 	updatedSettings := map[string]any{
-		"resolution":            "720p",
+		"resolution":            protocol.QualityResolution{Width: 1280, Height: 720},
 		"maxFramerate":          30,
 		"maxBitrate":            3_000_000,
 		"degradationPreference": "balanced",
-		"screenAudioQuality":    "music",
+		"maxAudioBitrate":       128000,
 	}
-	updatedJSON := `{"resolution":"720p","maxFramerate":30,"maxBitrate":3000000,"degradationPreference":"balanced","screenAudioQuality":"music"}`
+	updatedJSON := `{"resolution":{"width":1280,"height":720},"maxFramerate":30,"maxBitrate":3000000,"degradationPreference":"balanced","maxAudioBitrate":128000}`
 	reconnectedHost.sendJSON(map[string]any{"type": "set-quality-settings", "qualitySettings": updatedSettings})
 	expectEqual(t, viewer.next("quality-settings").raw, `{"type":"quality-settings","qualitySettings":`+updatedJSON+`}`)
 

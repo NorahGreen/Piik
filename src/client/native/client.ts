@@ -6,6 +6,7 @@ import type {
   QualitySettings,
   SignalPayload,
   SfuSignalMessage,
+  PunchPrediction,
 } from "../../shared/protocol";
 import { createOpaqueId } from "../lib/opaque-id";
 import {
@@ -18,6 +19,7 @@ import {
   nativeAckResponseSchema,
   nativeEventSchema,
   nativeDiscoveryIdentitySchema,
+  nativeConnectSchema,
   nativeHealthSchema,
   NATIVE_CLIENT_PORT_END,
   NATIVE_CLIENT_PORT_START,
@@ -34,6 +36,8 @@ import {
   sourceListResponseSchema,
   microphoneListResponseSchema,
   sourcePreviewResponseSchema,
+  punchPreparedResponseSchema,
+  punchCompleteResponseSchema,
   type NativeAdapter,
   type NativeClientEvent,
   type NativeHealth,
@@ -46,6 +50,7 @@ const REQUEST_TIMEOUT_MS = 8_000;
 
 interface NativeDiscoveryOptions {
   waitForPermission?: boolean;
+  signal?: AbortSignal;
 }
 
 async function ungrantedLocalPermission(): Promise<PermissionState | null> {
@@ -111,8 +116,32 @@ export class NativeRequestError extends Error {
 }
 
 export async function discoverNativeHealth(
-  { waitForPermission = true }: NativeDiscoveryOptions = {},
+  options: NativeDiscoveryOptions = {},
 ): Promise<NativeHealth | null> {
+  const health = await discoverNative("health", body => nativeHealthSchema.parse(body), options);
+  if (health) debugEvent("native", "discovered", { capabilities: health.nativeMedia });
+  return health;
+}
+
+/** A local approval address is not permission to use native media. */
+export async function discoverNativeConnect(signal?: AbortSignal): Promise<string | null> {
+  return discoverNative("connect-discovery", body => {
+    const { connectURL } = nativeConnectSchema.parse(body);
+    const url = new URL(connectURL);
+    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port ||
+        url.username || url.password || url.pathname !== "/client" || url.search || url.hash) {
+      throw new Error("Invalid local App approval address");
+    }
+    url.searchParams.set("site", window.location.origin);
+    return url.toString();
+  }, { signal });
+}
+
+async function discoverNative<T>(
+  path: "health" | "connect-discovery", read: (body: unknown) => T,
+  { waitForPermission = true, signal }: NativeDiscoveryOptions,
+): Promise<T | null> {
+  if (signal?.aborted) return null;
   if (!waitForPermission) {
     const permission = await ungrantedLocalPermission();
     if (permission) {
@@ -120,6 +149,7 @@ export async function discoverNativeHealth(
       return null;
     }
   }
+  if (signal?.aborted) return null;
   const controller = new AbortController();
   // The first request may wait for browser permission. One shared deadline
   // bounds the scan; a silent port must not hide an App on another port.
@@ -129,9 +159,9 @@ export async function discoverNativeHealth(
       length: NATIVE_CLIENT_PORT_END - NATIVE_CLIENT_PORT_START + 1,
     }, async (_, index) => {
       const port = NATIVE_CLIENT_PORT_START + index;
-      const response = await fetch(`http://127.0.0.1:${port}/health`, {
+      const response = await fetch(`http://127.0.0.1:${port}/${path}`, {
         cache: "no-store",
-        signal: controller.signal,
+        signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
         targetAddressSpace: "loopback",
       } as RequestInit);
       if (!response.ok) throw new Error("Piik App discovery was not accepted");
@@ -143,9 +173,7 @@ export async function discoverNativeHealth(
       if (identity.data.protocol !== NATIVE_CLIENT_PROTOCOL) {
         throw new NativeCompatibilityError(identity.data.protocol);
       }
-      const health = nativeHealthSchema.parse(body);
-      debugEvent("native", "discovered", { capabilities: health.nativeMedia });
-      return health;
+      return read(body);
     }));
   } catch (error) {
     const incompatible = error instanceof AggregateError
@@ -172,7 +200,7 @@ export async function notifyNativePresentation(
   signal: AbortSignal,
 ): Promise<void> {
   if (signal.aborted) return;
-  const health = await discoverNativeHealth();
+  const health = await discoverNativeHealth({ signal });
   if (!health || signal.aborted) return;
   await fetch(`http://127.0.0.1:${health.port}/presentation`, {
     method: "POST",
@@ -202,49 +230,49 @@ export class NativeClient {
   }
 
   static async connect(options?: NativeDiscoveryOptions): Promise<NativeClient | null> {
+    const signal = options?.signal;
     const health = await discoverNativeHealth(options);
-    if (!health) return null;
+    if (!health || signal?.aborted) return null;
     const socket = new WebSocket(`ws://127.0.0.1:${health.port}/control`, [
       `${NATIVE_CLIENT_SUBPROTOCOL}.${health.instanceToken}`,
     ]);
-    const opened = await new Promise<boolean>((resolveOpen) => {
-      const timer = window.setTimeout(
-        () => resolveOpen(false),
-        REQUEST_TIMEOUT_MS,
-      );
-      socket.addEventListener(
-        "open",
-        () => {
-          window.clearTimeout(timer);
-          resolveOpen(
-            socket.protocol ===
-              `${NATIVE_CLIENT_SUBPROTOCOL}.${health.instanceToken}`,
-          );
-        },
-        { once: true },
-      );
-      socket.addEventListener(
-        "error",
-        () => {
-          window.clearTimeout(timer);
-          resolveOpen(false);
-        },
-        { once: true },
-      );
-    });
-    if (!opened) {
-      debugEvent("native", "unavailable", { stage: "control" });
-      socket.close();
-      return null;
-    }
     const client = new NativeClient(health, socket);
+    // Acquisition owns discovery, the WebSocket handshake and hello together.
+    // Once returned, the caller owns the live client independently of this signal.
+    const abort = () => client.close();
+    signal?.addEventListener("abort", abort, { once: true });
     try {
+      const opened = await new Promise<boolean>((resolveOpen) => {
+        const finish = (value: boolean) => {
+          window.clearTimeout(timer);
+          socket.removeEventListener("open", onOpen);
+          socket.removeEventListener("error", fail);
+          socket.removeEventListener("close", fail);
+          signal?.removeEventListener("abort", fail);
+          resolveOpen(value);
+        };
+        const onOpen = () => finish(socket.protocol === `${NATIVE_CLIENT_SUBPROTOCOL}.${health.instanceToken}`);
+        const fail = () => finish(false);
+        const timer = window.setTimeout(fail, REQUEST_TIMEOUT_MS);
+        socket.addEventListener("open", onOpen);
+        socket.addEventListener("error", fail);
+        socket.addEventListener("close", fail);
+        signal?.addEventListener("abort", fail, { once: true });
+      });
+      if (!opened || client.closed || signal?.aborted) {
+        if (!signal?.aborted) debugEvent("native", "unavailable", { stage: "control" });
+        client.close();
+        return null;
+      }
       await client.request("hello", {}, readyResponseSchema);
+      if (client.closed || signal?.aborted) { client.close(); return null; }
       debugEvent("native", "connected");
       return client;
     } catch {
       client.close();
       return null;
+    } finally {
+      signal?.removeEventListener("abort", abort);
     }
   }
 
@@ -372,12 +400,14 @@ export class NativeClient {
     connectionId: string,
     iceConfig: IceConfig,
     sourceConnectionId?: string,
+    punched = false,
   ): Promise<RTCSessionDescriptionInit> {
     const response = await this.request(
       "prepare-edge",
       {
         shareId,
         connectionId,
+        ...(punched ? { punched: true } : {}),
         ...(sourceConnectionId ? { sourceConnectionId } : {}),
         iceServers: iceConfig.iceServers.map((server) => ({
           urls: Array.isArray(server.urls) ? server.urls : [server.urls],
@@ -392,6 +422,25 @@ export class NativeClient {
       throw new Error("Native edge identity changed");
     }
     return { type: "offer", sdp: response.sdp };
+  }
+
+  async preparePunch(shareId: string, connectionId: string, iceConfig: IceConfig,
+    secret: string, edgeCapacity?: number, sourceConnectionId?: string): Promise<PunchPrediction | null> {
+    const response = await this.request("prepare-punch", {
+      shareId, connectionId, secret,
+      ...(edgeCapacity !== undefined ? { edgeCapacity } : {}),
+      ...(sourceConnectionId ? { sourceConnectionId } : {}),
+      iceServers: iceConfig.iceServers.map(server => ({ urls: Array.isArray(server.urls) ? server.urls : [server.urls] })),
+    }, punchPreparedResponseSchema);
+    return response.prediction;
+  }
+
+  async runPunch(shareId: string, connectionId: string, prediction: PunchPrediction): Promise<boolean> {
+    return (await this.request("run-punch", { shareId, connectionId, prediction }, punchCompleteResponseSchema)).connected;
+  }
+
+  async closePunch(shareId: string, connectionId: string): Promise<void> {
+    await this.request("close-punch", { shareId, connectionId }, nativeAckResponseSchema);
   }
 
   async preparePublication(
@@ -501,12 +550,14 @@ export class NativeClient {
     shareId: string,
     connectionId: string,
     sourceConnectionId?: string,
-  ): Promise<RTCSessionDescriptionInit> {
+    restart = false,
+  ): Promise<RTCSessionDescriptionInit & { offerId: string }> {
     const response = await this.request(
       "prepare-local-edge",
       {
         shareId,
         connectionId,
+        restart,
         ...(sourceConnectionId ? { sourceConnectionId } : {}),
       },
       edgeOfferResponseSchema,
@@ -517,7 +568,7 @@ export class NativeClient {
     ) {
       throw new Error("Native local edge identity changed");
     }
-    return { type: "offer", sdp: response.sdp };
+    return { type: "offer", sdp: response.sdp, offerId: response.id };
   }
 
   async receiveOffer(
@@ -526,6 +577,7 @@ export class NativeClient {
     offer: RTCSessionDescriptionInit,
     iceConfig: IceConfig,
     edgeCapacity: number,
+    punched = false,
   ): Promise<{
     answer: { type: "answer"; sdp: string };
     audio: boolean;
@@ -542,6 +594,7 @@ export class NativeClient {
         connectionId,
         ...(this.health.nativeMedia.receiverReuse ? { reuseReceiver: true } : {}),
         edgeCapacity,
+        ...(punched ? { punched: true } : {}),
         iceServers: iceConfig.iceServers.map((server) => ({
           urls: Array.isArray(server.urls) ? server.urls : [server.urls],
         })),
@@ -591,13 +644,14 @@ export class NativeClient {
     shareId: string,
     connectionId: string,
     payload: SignalPayload,
+    offerId?: string,
   ): Promise<void> {
-    if (payload.connectionId !== connectionId) return;
+    if (payload.connectionId !== connectionId || payload.kind === "punch") return;
     if (payload.kind === "description") {
       if (payload.description.type !== "answer") return;
       await this.request(
         "edge-answer",
-        { shareId, connectionId, sdp: payload.description.sdp },
+        { shareId, connectionId, sdp: payload.description.sdp, ...(offerId ? { offerId } : {}) },
         nativeAckResponseSchema,
       );
       return;
@@ -753,6 +807,13 @@ export class NativeClient {
     }
     const event = nativeEventSchema.safeParse(value);
     if (!event.success) {
+      // A rejected observation has no control authority. Drop it without
+      // retiring healthy media; its identity/state must still pass to be used.
+      if (value && typeof value === "object" && "type" in value &&
+        (value.type === "edge-quality" || value.type === "publication-quality")) {
+        debugError("native", "quality-sample-invalid", event.error);
+        return;
+      }
       debugError("native", "protocol-failed", event.error, { stage: "event-invalid" });
       this.failConnection();
       return;

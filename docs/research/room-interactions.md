@@ -60,9 +60,15 @@ ends that service; merely leaving the Host page does not.
   session.
 - The viewer discovers this optional capability independently of first-picture
   startup. Late capability discovery enables data on the existing connection.
-- A strict payload union admits plain chat text or a registered reaction. Chat is
+- A strict command payload union admits plain chat text or a registered reaction. Chat is
   at most 280 Unicode code points, normalized to NFC, without control/bidi
   characters. It renders as text, with no markup, links, attachments or commands.
+- Received reaction names are bounded lowercase ASCII identifiers, not arbitrary
+  HTML, assets or commands. The page ignores an unsupported effect after protocol
+  validation; malformed events still fail validation. This follows the command/
+  response distinction in [Azure's extensible-enum guidance](https://github.com/microsoft/api-guidelines/blob/vNext/azure/Guidelines.md#enums--sdks-client-libraries),
+  checked on 2026-10-07. Existing strict pages still reject new names, so this
+  reader change alone does not authorize sending new reactions to those pages.
 - The server accepts at most one interaction per 800 ms per connection. It
   validates identity, subscription and target before fan-out. A slow recipient's
   data is skipped at 16 KiB queued output, reserving the existing bounded queue
@@ -229,6 +235,29 @@ The Host microphone remains commentary mixed into the shared source.
 Bidirectional room voice is not part of the product plan.
 Text, reactions and danmaku introduce no microphone capture, voice
 admission or additional media peers.
+
+## Detached Chat Window
+
+[Document Picture-in-Picture](https://developer.chrome.com/docs/web-platform/document-picture-in-picture)
+places the current chat panel in an always-on-top window without installing a
+PWA or implementing an App window. The candidate adopts one stable React portal:
+the same session, DOM, draft, reading position and controls remain in use.
+Visibility, focus, tooltip placement and dismissal follow the displaying document.
+Theme and language follow the opener. The browser owns window movement and sizing;
+closing the window returns the panel to the page. Room retirement disposes it,
+including a window request that completes after retirement.
+
+The [specification](https://wicg.github.io/document-picture-in-picture/) requires
+a secure context and user activation; closing or navigating the opener closes
+the PiP window. It is useful for reading chat beside a windowed or borderless game;
+placement above exclusive fullscreen is not guaranteed. Transparent desktop
+backgrounds and mouse passthrough remain an
+[upstream request](https://github.com/WICG/document-picture-in-picture/issues/99),
+so CSS opacity is not offered as a misleading game-transparency control.
+[Browser support](https://developer.mozilla.org/en-US/docs/Web/API/DocumentPictureInPicture#browser_compatibility)
+is incomplete, so unsupported pages retain the in-page panel. Video PiP and chat
+PiP may replace each other under the browser's single-window policy; no media
+or room owner changes. This needs no new room protocol or major version.
 
 ## Primary References And Rationale
 

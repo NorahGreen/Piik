@@ -79,14 +79,33 @@ the relevant existing fixture/check together. Do not create another handwritten
 field list in documentation, parallel DTO hierarchy or schema generator without
 a demonstrated reduction in ownership or drift.
 
-Keep UI presets, requested values, runtime capabilities and hard resource limits
-distinct. A current menu is not sufficient reason to freeze its values into every
-wire reader or platform adapter. Preserve meaningful authorization and resource
-bounds; prove that a producer's valid aggregate output fits its consumer, including
-serialization overhead. A per-item limit alone does not establish that contract.
+Keep UI presets, requested values, runtime capabilities, observations and hard
+resource limits distinct. Every bound needs an owner and a reason: wire/codec
+representation, accepted product policy or resource protection. A current menu
+or retry budget is not sufficient reason to freeze its values into a wire reader.
+Validate representation at the interface, then supported operations at their
+owner before allocating or changing live state. An unsupported setting should
+use the existing operation rejection, without retiring an otherwise valid session.
 
-When extending a boundary, exercise a representative new value and an unchanged
-consumer before calling the design extensible. For media, include another source
+A capability description may exceed the reader's implementation. Intersect it
+with local support and budgets; do not treat a stronger peer as absent or grant
+resources from its declaration alone. Measurements are observations, not resource
+requests: their range need not match a setting or estimated network budget.
+An unusable optional metric should become unavailable without discarding valid
+evidence or closing media control. Identity, generation, authority and required
+state consistency remain strict; never clamp a measurement into an invented fact.
+
+Detect optional platform features through bounded capability checks and actual
+operation results, not OS/browser version allowlists. Keep API availability,
+permission and successful execution distinct; version data is diagnostic context.
+
+Preserve meaningful authorization and resource bounds; prove that a producer's
+valid aggregate output fits its consumer, including serialization overhead.
+A per-item limit alone does not establish that contract.
+
+When extending a boundary, exercise a representative new value, a larger peer
+capability and an unchanged consumer before calling the design extensible.
+Check both acceptance and the effect of rejection. For media, include another source
 orientation and distinguish encode, decode and forwarding support. Optional
 presentation additions need a bounded unsupported-value policy separate from
 authority violations, following [versioning](./versioning.md#extending-interfaces).
@@ -171,6 +190,8 @@ above rather than searching the tree.
   Construction is part of acquisition: if it throws, release resources created
   before the failure and report through the existing operation owner. A failed
   allocation does not erase the operation's authoritative identity.
+  Initialize callback-visible state before registration or binding; library
+  constructors can start background work before returning.
   Ordered shutdown may require a ready auxiliary transport to outlive the stop
   request; its owner closes it after dependants retire. External convenience
   actions must not block lifecycle handling, and repeated attempts stay bounded.

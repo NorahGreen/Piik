@@ -1,6 +1,5 @@
 import {
   configureVideoSender,
-  QUALITY_RESOLUTIONS,
   startupVideoProfile,
   type QualityProfile,
 } from "../media/quality";
@@ -56,7 +55,7 @@ export function h264ProbeTarget(
   settings: MediaTrackSettings,
   profile: QualityProfile,
 ): H264ProbeTarget {
-  const ceiling = QUALITY_RESOLUTIONS[profile.resolution];
+  const ceiling = profile.resolution;
   const sourceWidth = positiveNumber(settings.width, ceiling.width);
   const sourceHeight = positiveNumber(settings.height, ceiling.height);
   const scale = Math.max(
@@ -236,6 +235,7 @@ export function h264ProbeSustainsTarget(
     const encoded = current.framesEncoded - baseline.framesEncoded;
     const source = current.sourceFrames - baseline.sourceFrames;
     return (
+      source > 0 && encoded > 0 &&
       source + frameLag >= expectedFrames &&
       encoded + frameLag >= expectedFrames &&
       encoded + frameLag >= source
@@ -243,12 +243,12 @@ export function h264ProbeSustainsTarget(
   }
   if (
     current.encodedFramesPerSecond === null ||
-    current.sourceFramesPerSecond === null ||
-    current.sourceFramesPerSecond <= 0
+    current.sourceFramesPerSecond === null
   ) {
     return null;
   }
   return (
+    current.sourceFramesPerSecond > 0 && current.encodedFramesPerSecond > 0 &&
     current.sourceFramesPerSecond + frameLag >= targetFrameRate &&
     current.encodedFramesPerSecond + frameLag >= targetFrameRate &&
     current.encodedFramesPerSecond + frameLag >=

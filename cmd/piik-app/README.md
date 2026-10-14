@@ -24,12 +24,11 @@ publication are separate steps in [deployment](../../docs/deployment.md).
 
 ## Modes
 
-- With no mode argument, the App opens a small launcher in the system
-  Browser. It selects Local, a temporary public HTTPS invitation, or a saved
-  Site, then enters the normal Host page.
-- The launcher remembers the last mode confirmed with **Open Piik** and the saved
-  Site address. Without a saved mode, it selects Site when an address is saved,
-  otherwise Public invite; it waits for confirmation before starting.
+- With no mode argument, the App opens its launcher and waits for use by an
+  approved Site. Choose **Local room** or **Public invite** to start a room
+  service on this device and enter the normal Host page.
+- The launcher remembers the last mode confirmed with **Open Piik**. Without a
+  saved Local/Public choice, it selects Public invite and waits for confirmation.
   The mode preference is stored beside the settings in `client.json.mode`;
   [App configuration](../../docs/standards/configuration.md#piik-app-configuration)
   covers saved preferences and custom paths.
@@ -49,18 +48,22 @@ media-server forwarding (SFU) or TURN relay fallback. The
 
 For Local invitations, the App automatically selects a sole active address or
 sole private IPv4. If several addresses remain possible, choose an interface
-and IP in the launcher. Public invite and Site mode need no LAN selection.
+and IP in the launcher. Public invite and use through a Site need no LAN selection.
 When bypassing the launcher with `--local`, use `--lan-address <address>` to
 resolve an ambiguous choice. The selected address is checked again at startup;
 it affects Local invitation links, while ICE selects media paths independently.
 
-Site mode uses the configured Site's rooms and any enabled SFU fallback.
-An App-opened Site remembers native activation, so later pages there may reuse
-the running App. Browser capture remains available without the App; see the
+To use a Piik Site, keep the App running and click **App** at the top of the Site.
+Confirm its address on the local approval page. The App remembers one approved
+Site, which the launcher can open or revoke. Approving another replaces it and
+ends the previous Site's App connections; Local rooms remain independent.
+The browser remembers activation, so later visits reuse the running App with
+that Site's rooms and any enabled SFU fallback. Browser capture remains available
+without the App; see the
 [entry workflow](../../docs/standards/presentation-lifecycle.md#product-surface).
 
-The Host page offers Browser capture and available native windows or screens;
-select the source explicitly. Windows native capture offers VP8/Auto/H264;
+The Host page offers Browser and Camera capture alongside available native
+windows or screens; select the source explicitly. Windows native capture offers VP8/Auto/H264;
 Auto chooses one codec for the share. macOS and Linux native capture require
 hardware H264. Source and audio support vary by platform; their setup is covered
 in the [Windows](../../native/capture/windows/README.md),
@@ -87,7 +90,8 @@ The terminal shows the current mode, entry links and startup state; its language
 follows the launcher and App-enabled pages.
 Press `o` to reopen the Browser, or `q` / Ctrl+C to end Local
 rooms and stop the local server and temporary public link. Plain-text output
-uses Ctrl+C. The App keeps running after a Site tab closes.
+uses Ctrl+C. The Linux desktop entry also opens this terminal. The App keeps
+running after a Site tab closes.
 When launched in its own Windows console, a startup or runtime error leaves the
 error visible until Enter is pressed. Normal shutdown, existing terminals and
 redirected or automated runs exit directly.
@@ -111,7 +115,7 @@ For codec-specific failures, see [Windows H264 troubleshooting](../../docs/guide
 
 ### Diagnostics
 
-Enable **Debug launch** in the mode selector before opening Piik, reproduce the
+Enable **Debug launch** in the launcher before starting a room or connecting a Site, reproduce the
 problem, then press `D` in the interactive terminal to export a local ZIP.
 Use `--debug` for failures before the selector opens. Exporting does not stop
 the share or upload the archive. For Browser diagnostics, click the **Debug**
@@ -143,7 +147,7 @@ go build -o build/dev/piik-app.exe ./cmd/piik-app
 ./build/dev/piik-app.exe
 ```
 
-These commands build the App only. Choose **Local room** or a configured Site
+These commands build the App only. Choose **Local room** or open a Piik Site
 for Browser capture. Native capture and **Public invite** need their helpers;
 use `--capture-process` / `--tunnel-process` to select built helpers, or follow
 [packaging](#packaging) for a complete bundle.
@@ -259,16 +263,6 @@ PIIK_GO=/path/to/go \
 npm run gate:app-native-host
 
 PIIK_CLIENT_NATIVE_HOST_GATE=true \
-PIIK_CLIENT_CROSS_NAT_GATE=true \
-CHROME_PATH=/path/to/chrome \
-PIIK_GO=/path/to/go \
-PIIK_REMOTE_HOST=<public-test-host> \
-PIIK_REMOTE_USER=<ssh-user> \
-PIIK_REMOTE_SSH_KEY=/path/to/key \
-PIIK_CLIENT_GATE_STUN_URLS=stun:<stun-host>:3478 \
-npm run gate:app-native-host
-
-PIIK_CLIENT_NATIVE_HOST_GATE=true \
 PIIK_CLIENT_LINK_MEDIA_GATE=true \
 CHROME_PATH=/path/to/chrome \
 PIIK_GO=/path/to/go \
@@ -291,11 +285,12 @@ The Windows media gate proves one hardware-H.264
 capture generation, shared Pion source, Browser decode, PLI recovery, and STUN
 candidate gathering. The native Host gate proves room creation and native video
 delivery through the current route; native audio is included when the capability
-probe and target OS support it. The cross-NAT variant uses a temporary reverse
-SSH path for signaling only and requires a selected `srflx` or `prflx` media pair;
-media never travels through SSH. The one-link media variant instead carries the
-same signaling through the App's temporary public origin and requires direct
-media delivery to an independent Linux peer. Native P2P quality evidence and
-embedded SFU delivery have explicit gates. macOS and Linux capture still
+probe and target OS support it. The one-link media variant carries signaling
+through the App's temporary public origin and requires direct video RTP delivery
+to an independent Linux peer, with a selected `srflx` or `prflx` candidate.
+SSH only runs the remote probe; media never travels through it. Without a remote
+host, this variant checks decoded media in a local Browser through the public
+invitation; that does not establish cross-network connectivity. Native P2P
+quality evidence and embedded SFU delivery have explicit gates. macOS and Linux capture still
 require physical desktop/media gates; CI compilation and package smoke do not
 substitute for them.

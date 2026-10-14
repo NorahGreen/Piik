@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,7 +19,7 @@ import (
 
 // Use the browser-standard spelling of Constrained Baseline in SDP. Pion's
 // codec ordering prefers literal profile matches over equivalent constraint bits.
-const H264ProfileLevelID = "42e033"
+const H264ProfileLevelID = "42e034"
 
 var h264Capability = webrtc.RTPCodecCapability{
 	MimeType:    webrtc.MimeTypeH264,
@@ -67,6 +68,7 @@ type Engine struct {
 	publications map[*Publication]struct{}
 	sockets      map[*iceSocket]struct{}
 	closed       bool
+	punch        *PunchPreparation
 }
 
 func NewEngine(options EngineOptions) (*Engine, error) {
@@ -83,7 +85,18 @@ func NewEngine(options EngineOptions) (*Engine, error) {
 
 	mediaEngine := &webrtc.MediaEngine{}
 	for _, codec := range []string{"h264", "vp8"} {
-		if err := mediaEngine.RegisterCodec(videoCodecs[codec], webrtc.RTPCodecTypeVideo); err != nil {
+		primary := videoCodecs[codec]
+		if err := mediaEngine.RegisterCodec(primary, webrtc.RTPCodecTypeVideo); err != nil {
+			return nil, err
+		}
+		// Keep the standard repair stream paired with its media codec. Reusing
+		// old primary sequence numbers cannot repair packets outside SRTP's
+		// replay window after a network outage (RFC 4588).
+		if err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
+			RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeRTX,
+				ClockRate: videoClockRate, SDPFmtpLine: "apt=" + strconv.Itoa(int(primary.PayloadType))},
+			PayloadType: primary.PayloadType + 1,
+		}, webrtc.RTPCodecTypeVideo); err != nil {
 			return nil, err
 		}
 	}
@@ -137,6 +150,10 @@ func stunServers(servers []webrtc.ICEServer) []webrtc.ICEServer {
 // NewSource coalesces recovery requests by physical output slot; [-1] requests
 // all outputs. The callback runs outside the source lock and forwarding path.
 func (engine *Engine) NewSource(codec string, capacity, layers int, requestKeyFrame func([]int)) (*Source, error) {
+	return engine.newSource(codec, capacity, layers, nil, requestKeyFrame)
+}
+
+func (engine *Engine) newSource(codec string, capacity, layers int, relay *RelayOptions, requestKeyFrame func([]int)) (*Source, error) {
 	_, supported := videoCodecs[codec]
 	if !supported {
 		return nil, errors.New("native video codec is unsupported")
@@ -157,6 +174,15 @@ func (engine *Engine) NewSource(codec string, capacity, layers int, requestKeyFr
 		capacity: capacity, requestKeyFrame: requestKeyFrame, edges: make(map[*Edge]bool),
 		publications: make(map[*Publication]struct{}),
 	}
+	// Binding forwarding buffers can start asynchronous PLI callbacks. Publish
+	// their immutable inputs before binding, and start our worker only on success.
+	if requestKeyFrame != nil {
+		source.recoveryRequests = make(chan struct{}, 1)
+		source.recoveryStopped = make(chan struct{})
+	}
+	if relay != nil {
+		source.relay = &relayDerivation{source: source, options: *relay}
+	}
 	media, err := forwarding.NewEncodedSource(forwarding.SourceOptions{
 		ID: "screen", StreamID: "piik-native", Codec: videoCodecs[codec],
 		Formats: make([]forwarding.LayerFormat, layers), MaxPackets: encoded.MaxPacketWindow,
@@ -174,8 +200,6 @@ func (engine *Engine) NewSource(codec string, capacity, layers int, requestKeyFr
 	}
 	source.media = media
 	if requestKeyFrame != nil {
-		source.recoveryRequests = make(chan struct{}, 1)
-		source.recoveryStopped = make(chan struct{})
 		go source.runRecovery()
 	}
 	return source, nil
@@ -218,6 +242,7 @@ func (engine *Engine) Close() error {
 		sockets = append(sockets, socket)
 	}
 	engine.mu.Unlock()
+	engine.ClosePunch("")
 	closeEdges(edges)
 	for _, publication := range publications {
 		_ = publication.Close()

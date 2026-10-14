@@ -1,10 +1,10 @@
 # Native App Media Evidence
 
-- Reviewed: 2026-10-06
+- Reviewed: 2026-10-11
 - Scope: platform capture, shared encoded sources, Pion transport and Browser
   decode; current behavior belongs to [media quality](../standards/media-quality.md)
-- Status: Windows physical native Host and Viewer gates passed; macOS and Linux adapters
-  compile and package but still require physical media gates
+- Status: Windows physical native Host and Viewer gates passed; both macOS
+  architectures compile and pass packaged startup; macOS/Linux physical media gates remain open
 
 ## Windows Audio Exclusion
 
@@ -32,10 +32,10 @@ application's process tree or simultaneous playback across several output device
 device acceptance boundaries. [ADR-0008](../adr/0008-window-scoped-audio-capture.md)
 owns the platform choice.
 
-The capability check now attempts exclusion activation on Windows 10 2004+
-instead of rejecting all builds below 20348. Microsoft documents 20348 as the
-minimum, while OBS documents application loopback on Windows 10 2004+; the
-activation result, not an OS label, controls availability. Physical Windows 10
+The capability check attempts inclusion and exclusion activation independently,
+without an OS-version gate. Microsoft documents 20348 as the minimum, while OBS
+documents application loopback on Windows 10 2004+; the activation result, not
+an OS label, controls availability. Physical Windows 10
 exclusion remains unverified. A session regression check changes exclusion and
 source-audio off/on while video preparation is deliberately unavailable: the
 capture stream, encoded source, audio output and connected edge remain the same.
@@ -118,8 +118,8 @@ congestion behavior or a paired no-Site Browser media session.
 The audio adapter uses `github.com/thesyncim/gopus` behind the private
 `nativeaudio` boundary. It accepts fixed 48 kHz stereo PCM16/20 ms frames,
 encodes into a caller-owned Opus buffer, and can be replaced without changing
-the media edge or control wire. The dependency is BSD-3-Clause licensed and
-requires Go 1.25; App CI uses Go 1.26.6.
+the media edge or control wire. The dependency is BSD-3-Clause licensed;
+App CI follows the toolchain declared in [go.mod](../../go.mod).
 
 ## Current Boundary
 
@@ -357,6 +357,49 @@ that result nor the allocation timings establish the reported system-wide lag's
 cause. Retain the existing implementation; reopen optimization from a matched
 bottleneck.
 
+### Virtual-Display Acceptance Limit
+
+On 2026-10-07, the local Native H.264 SFU gate initially passed its two-room
+check, then missed its unchanged 300-frame/30-second requirement. The repeat
+environment exposed only a GameViewer virtual display. Current main reproduced
+the failure with its own App and capture binary: video/audio arrived, but video
+was roughly 4–7 fps without receiver loss or decode drops. A source-window draw
+counter advanced about 133 times per second; that counts drawing attempts, not
+Windows capture delivery.
+
+Temporary capture instrumentation observed about 3–4 WGC frame-arrival events
+per second. Queue draining was bounded in the observation, conversion/submission
+took less than a millisecond, and encoder diagnostics showed small encode times
+without CPU/quality adaptation. Bringing the source window forward did not
+restore cadence. A capture-only control, without the App or SFU, also delivered
+about 3.9 fps from both Chrome and a separate animated Windows Forms window.
+A separate minimal WGC program, using only Windows APIs and no Piik code,
+reproduced about 3.8 fps while that Forms window painted about 32 fps.
+Default, 4 ms and 1 ms capture intervals returned the same rate, including with
+the source kept topmost; property readback confirmed each requested interval.
+This localizes the limit to platform capture delivery in this environment but
+does not establish the virtual driver's cause or diagnose a field report.
+No capture scheduling, encoder policy or gate threshold was changed.
+
+Later on the same day, Windows reported an active physical AOC display. The
+unchanged Windows-API-only probe delivered about 32 fps, matching its GDI source,
+at the default, 4 ms and 1 ms intervals. The candidate's Native H.264 two-room
+SFU gate then passed the original 300-frame/30-second requirement, live profile
+change, decoded audio, subscription recovery and retirement. Stopping the first
+room preserved another 30 decoded frames and continuing audio in the second;
+all owned processes, profiles and ports were released. This closes that local
+throughput acceptance gap. It does not isolate the virtual driver's cause or
+establish physical HDR, game-load or other-device performance.
+
+The same capture-delivery limit recurred during the October 14 audio checks.
+At final local acceptance, the unchanged capture-only probe delivered about
+144 fps, and the default 720p Native VP8 and H.264 SFU gates passed their original
+throughput requirement, live audio/video changes, subscription and page-reload
+recovery, publication retirement and cleanup. The VP8 two-room check also kept
+the second room's picture and audio after the first stopped. No product or
+gate-threshold change was needed to clear this local acceptance failure; the
+intermittent platform cause and physical-device limits remain unproven.
+
 ## Native H.264 Motion Quality
 
 Issue [#432](https://github.com/TNTcraftHIM/Piik/issues/432) reports more visible
@@ -451,9 +494,11 @@ Baseline alternatives. The original field quality cause remains unproven.
 
 One independent compatibility defect was confirmed: capture admission compared
 against `42c0` literally, rejecting equivalent Constrained Baseline SPS such as
-`42e0`. Windows validation and the shared Go capture-state reader now follow
+`42e0`. The three Native adapters and shared Go capture-state reader now follow
 [RFC 6184 Table 5](https://www.rfc-editor.org/rfc/rfc6184.html#section-8.1), retaining
-the existing level bounds and rejecting actual Main/High. Windows active status
+the shared level bounds and rejecting actual Main/High. Linux's former output
+gate also omitted Level 5.2 and lower automatic levels; it now follows the same
+admission as its requested profiles. Windows active status
 reads the emitted SPS instead of synthesizing a vendor-specific value. This is
 not a profile upgrade or an explanation for `DXGI_ERROR_DEVICE_REMOVED`.
 
@@ -476,46 +521,372 @@ a corrected SDP interpretation, not evidence that all Firefox sharing lost audio
 
 ## Media Capability Extension Assessment
 
-Proposal assessed 2026-10-04 for a possible 2.0 phase; this does not change the
-current contract or the profile decision above. Resolution enums are enforced
+Planning direction reviewed 2026-10-09 for 2.0; the design below is a proposal,
+not a replacement for the current contract or profile decision above. The owner
+reopened numeric media requests and capability negotiation as one coherent
+extension. The published resolution enums are enforced
 by both signaling readers and Native control, while capture admission separately
 bounds dimensions. Native capture, forwarding and SFU declarations also admit
 specific encoded formats. Removing one validator would leave these consumers
 inconsistent.
 
-Source review also distinguishes output geometry from a quality limit. Windows
-`FrameConverter` fits content into the selected landscape raster with a black
-background, so its padding is encoded. Browser display capture instead requests
+Source review also distinguishes output geometry from a quality limit. The
+published Windows path fits content into the selected landscape raster with a
+black background, so its padding is encoded. Browser display capture instead requests
 landscape width/height ceilings; a portrait source can be reduced unnecessarily
 by the height ceiling. The shared TV uses `object-fit: contain` in a 16:9 stage,
 adding presentation space independently of encoded padding. For example, the
-Windows fit rule places 1080x1920 content at 608x1080 inside a 1920x1080 output.
+published Windows fit rule places 1080x1920 content at 608x1080 inside a 1920x1080 output.
 This is a code-derived result, not a new physical capture measurement. Evaluate
 orientation-independent limits and preservation of source aspect ratio together;
 adding numeric fields alone would retain the current geometry limitation.
 
-The restriction extends beyond resolution labels: shared readers also bound
-frame rate and bitrate, and Native's selectable profile admits four exact raster
-pairs while derived outputs admit other dimensions within axis-specific limits.
-These are different meanings. Keep explicit resource ceilings, but assess them
-separately from presets and device capability; arbitrary numbers are not the
-replacement contract.
+The candidate changes the existing Windows output worker: it passes the
+source's fitted even dimensions to WebRTC, retaining the selected profile as a
+ceiling. A 640x480 source stays 640x480; portrait and ultrawide sources no longer
+require an encoded landscape canvas. The converter, adaptation owner, output
+generation and frame envelope are reused. Axis-specific limits still apply;
+portrait capture can use explicit width/height ceilings but does not transpose
+the selected ceiling automatically. Browser evidence follows below.
 
-The smallest proposed extension separates UI presets from numeric media limits
-and uses existing WebRTC codec negotiation. The
-[Media Capture specification](https://www.w3.org/TR/mediacapture-streams/)
-distinguishes requested constraints, supported ranges and actual settings;
-[WebRTC capabilities](https://www.w3.org/TR/webrtc/#rtcrtpsender-interface)
-advertise optimistic codec support, not guaranteed hardware execution. Preserve
-actual encoder admission and validate dimensions, pixel counts, frame sizes and
-resource bounds at their existing owners.
+Linux uses the existing [GStreamer scaler](https://gstreamer.freedesktop.org/documentation/videoconvertscale/videoscale.html)
+with bounded even-dimension ranges instead of fixed output dimensions. Square
+pixel negotiation retains presentation aspect without a padded canvas; encoded
+samples provide the actual dimensions for the frame envelope. The headless
+control changes portrait, ultrawide, small, odd-sized and square inputs within
+one pipeline, checks the output ceiling and image corners, and exercises the
+smallest derived output. Compilation and those regressions passed on Linux;
+Portal capture and hardware encoder resizing still need a physical device.
+
+The macOS candidate now interprets ScreenCaptureKit's per-frame content rectangle,
+pixel scale and content scale, following Apple's
+[frame-metadata guidance](https://developer.apple.com/videos/play/wwdc2022/10155/).
+It retains the bounded capture surface, describes its content through CoreVideo's
+clean aperture and uses VideoToolbox's
+[source-aperture scaling](https://developer.apple.com/documentation/videotoolbox/kvtscalingmode_cropsourcetocleanaperture).
+Each existing output worker fits the unscaled source within its ceiling and
+replaces only its compression session when the fitted size changes. The frame
+envelope carries actual dimensions; declared output limits and room/route
+identity remain unchanged. Encoded-input derivation uses the same worker.
+
+The candidate passes macOS SDK compilation and packaged startup on Apple silicon
+and Intel in [CI run 38128668158](https://github.com/TNTcraftHIM/Piik/actions/runs/38128668158).
+The native check includes content-geometry validation and successive-shape
+hardware self-tests when an encoder is available. Runner checks do not replace
+real window resizing, Retina transitions, cropped image fidelity or quiet-source
+recovery on a physical Mac.
+
+Local synthetic-input controls exercised that production worker through four
+successive source sizes: 1080x1920, 3440x1440, 640x480 and 1920x1080. Under the
+1080p ceiling, H.264 and VP8 each produced 40 frames at 606x1080, 1920x802,
+640x480 and 1920x1080; Chrome decoded every frame at the declared dimensions.
+Separately, a codec-only control bypassed product profile admission and encoded
+1080x1920, 3440x1440 and 3840x2160 at 30 fps with the current Windows H.264
+encoder. Chrome decoded all 30 frames per size; observed levels were 4.0, 5.0
+and 5.1. This establishes local codec feasibility, not product 4K support,
+4K60, sustained performance or cross-device acceptance.
+
+The real Windows H.264 source also passed the existing App UI and two-Viewer
+gates: live/paused settings, background/window recovery, source replacement and
+retirement retained their expected owners. Native SFU passed 300 decoded frames
+at its original source aspect, reduction from 658x720 to 438x480, numeric audio
+changes, Viewer reload/recovery and cleanup. Gate expectations now derive from
+the observed source and selected ceilings, instead of requiring encoded 16:9
+padding. Physical game, macOS/Linux and orientation-change acceptance remain open.
+
+The candidate's Native capture admission now shares the numeric dimension
+bounds already used by encoded outputs instead of duplicating the four UI
+presets. A source ceiling must also yield a valid half-size output. Bitrate and
+output-count bounds remain unchanged. Candidate signaling and Native control now carry numeric
+width/height ceilings, with custom input beside the existing UI shortcuts.
+Descriptive wire bounds are independent of the current implementation maximum;
+App discovery advertises size, pixel-count, macroblock-rate, frame-rate and bitrate limits, and Native rejects unsupported
+size/rate combinations as operation failures without retiring the control
+session. Removing an enum is not permission to allocate arbitrary media resources.
+
+The Windows H.264 UI gate switches from 1080p60 to the 4K ceiling, then applies
+a non-preset 960x600 ceiling during the live share. Its earlier 30 fps run
+observed fitted output without replacing the Viewer media object. The gate now
+expects the 60 fps control and needs rerunning. The captured window is smaller
+than 4K, so this verifies settings/lifecycle, not physical 4K capture.
+Preset changes, paused updates, source recovery/replacement and subsequent
+sharing still pass. Value-based comparison prevents an identical deserialized
+size from turning an audio-only edit into a video update. Numeric preference
+round-trips and malformed/unsupported requests have separate boundary checks.
+
+Native bounds admit 3840x2160 and 2160x3840 at 60 fps. The per-axis limit and
+pixel total remain independent; an arbitrary 3840-square picture is rejected.
+The output throughput ceiling uses H.264 Level 5.2's macroblock rate, including
+alignment for non-preset sizes. Coded padding and decoded reference buffers have
+their own pre-allocation bounds, following [H.264 Table A-1](https://www.itu.int/rec/T-REC-H.264)
+(also implemented in [FFmpeg's level table](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_levels.c)).
+Level 5.2 raises throughput without raising Level 5.1's coded-frame or
+reference-picture storage bounds.
+
+A 2026-10-11 control corrected the earlier 4K30 conclusion: explicitly forcing
+Level 5.2 failed this hardware encoder's output-type setup, but leaving the
+level unset encoded the same 4K60 inputs as Constrained Baseline Level 5.2.
+[Microsoft recommends automatic level selection](https://learn.microsoft.com/en-us/windows/win32/medfound/h-264-video-encoder).
+The production configuration follows that advice and validates actual SPS tools
+and level through 5.2, retaining stable SPS identity and recovery-unit checks.
+Local Media Foundation hardware/software decode delivered all 60 frames in both
+4K orientations, with a passing 1080p60 control. Chrome also decoded all 60
+production-encoder frames per orientation; production H.264 and VP8 workers
+passed a 4K-to-1080p-to-4K source sequence at the 60 fps setting. The normal
+Go/native encoded-input path also derived lower outputs from these inputs.
+This disproves a blanket 4K30
+restriction; the combined encode/decode fixture does not establish sustained
+60 fps on every device. Microsoft's older decoder documentation lists
+[Level 5.1](https://learn.microsoft.com/en-us/windows/win32/medfound/h-264-video-decoder),
+so local success is not a cross-device guarantee.
+
+A separate Chrome 152 canvas/PeerConnection control decoded 3840x2160 near
+60 fps with both H.264 and VP8. Its H.264 SDP advertised Level 3.1, consistent
+with [WebRTC's built-in capability list](https://webrtc.googlesource.com/src/+/refs/heads/main/modules/video_coding/codecs/h264/h264.cc).
+That static label alone does not establish a device's observed limit. Piik does
+not add an independent quality ladder or infer universal decoder support from
+codec matching; limited receivers and real routes still need acceptance.
+
+Decoder format checks must distinguish storage from visible content. On
+2026-10-11, the Windows decoder rejected a valid 3840x2160 picture stored in a
+3840x2176 surface because its output check applied the visible-pixel bound to
+codec padding. Media Foundation's [display aperture](https://learn.microsoft.com/en-us/windows/win32/medfound/picture-aspect-ratio)
+and CoreMedia's [clean aperture](https://developer.apple.com/documentation/coremedia/cmvideoformatdescriptiongetcleanaperture(_:originisattopleft:))
+own visible dimensions; both adapters now validate these separately from bounded
+coded storage. Windows copies the aperture while retaining the decoder surface,
+so downstream outputs receive the visible picture. The native regression checks
+right/bottom H.264 padding with real software decoding, visible edge pixels, and
+an offset NV12 aperture through the DXGI-buffer path. Oversized coded/reference
+storage remains rejected; the physical macOS boundary above still applies.
+
+An additional nonzero left/top SPS crop exposed a local Media Foundation software
+decoder limit: its raw output omitted right/bottom picture pixels before Piik's
+surface copy. FFmpeg decoded the same generated frame correctly. Removing the
+input-size hint or changing output-aperture attributes did not restore them.
+The passing ordinary alignment-padding controls do not establish arbitrary SPS
+crop support on that decoder; no bitstream rewrite or replacement decoder is
+introduced for this unreported platform edge case.
+
+Current production Windows code encoded and decoded 30 synthetic frames in each
+4K orientation, both with and without a D3D decoder manager. Retaining/uploading
+the decoded surface also passed. The normal Go/native encoded-input path then
+produced 1920x1080 and 1080x1920 derived outputs. Production H.264 and VP8 output
+workers also handled a 4K-to-1080p-to-4K synthetic source sequence, and Native
+VP8 derivation produced the lower output from the 4K input. The Browser H.264 SFU gate with
+a synthetic 3840x2160/30 source passed first-picture delivery, an explicit lower
+profile, audio-only edits with retained connections, subscription/page recovery
+and retirement. Windows native checks and Linux headless build/checks pass;
+macOS SDK and physical 4K capture are not verified here. Controls now use the
+combined limits, reject oversized pixel totals and cap frame rate on size changes.
+
+Chrome 154 real portrait/landscape tab capture retained the source aspect through
+the pooled output. The landscape check also passed live/quiet/paused profile
+changes, source replacement and ordinary recovery after producer failure.
+A synthetic 2160x3840 Browser relay delivered fresh pictures to two children,
+including a late connection. Separate 3840x2160 and 2160x3840 Browser-to-Native
+fanout checks delivered about 30 fps to both Viewers and passed live reduction,
+pause/resume, source-audio changes and App-exit recovery. Reproduce with
+`PIIK_CLIENT_BROWSER_FANOUT_GATE=true`, `PIIK_CLIENT_GATE_VIDEO_SIZE=WIDTHxHEIGHT`
+and `CHROME_PATH` set, then run `npm run gate:app-browser-fanout`.
+These local checks do not establish 4K60, physical 4K/game
+capture, sustained device performance, all Browser decoders or all route changes.
+
+The existing SFU gate accepts `PIIK_EMBEDDED_SFU_VIDEO_SIZE=WIDTHxHEIGHT` for a
+bounded 60 fps / 50 Mbps source; its default 720p15 control remains unchanged. Run
+`npm run gate:embedded-sfu` with `PIIK_EMBEDDED_SFU_GATE=true`,
+`PIIK_EMBEDDED_SFU_CODEC=h264` and `CHROME_PATH`; add
+`PIIK_EMBEDDED_SFU_DISPLAY=true` for actual tab capture. Synthetic 2160x3840 and
+real 3440x1440 tab sources passed decoded-picture delivery, aspect-preserving
+reduction, numeric audio updates, subscription/page recovery and retirement.
+The tab control also passed background capture, lower-layer demand, pause/resume
+and source replacement. A separate full-UI 2160x3840 control passed SFU-to-P2P
+commit and failed-P2P-to-SFU recovery through the room controller, keeping the
+old SFU picture during peer preparation. The mixed Browser Host/Native Viewer
+control also passed those transitions. With clarity priority, its live
+2160x3840-to-360x640 edit retained the Native connection and playback track;
+SFU recovery retained that size and then restored 2160x3840. Firefox 155 received
+the same VP8 and H.264 sizes from Chrome 154, retaining its track through both
+edits; H.264 also passed through embedded SFU. All controls retired their
+receiving connections on stop. Balanced priority may deliver smaller adapted pictures.
+These local checks do not establish physical
+4K capture, every mixed handoff or cross-network performance.
+
+The H.264 control supplies OpenH264 2.6.0 to an isolated Firefox profile, using
+the artifact and SHA-512 from [Mozilla's codec manifest](https://github.com/mozilla-firefox/firefox/blob/main/toolkit/content/gmp-sources/openh264.json).
+This follows the [Web Platform Tests setup](https://github.com/web-platform-tests/wpt/blob/master/tools/wpt/browser.py).
+A fresh-profile control did not advertise H.264 and could not receive the
+H.264-only share, so codec availability must be established before attributing
+that result to resolution or networking. Firefox owns its component installation;
+the [upstream report](https://bugzilla.mozilla.org/show_bug.cgi?id=1766638) records
+the separate first-use installation boundary.
+With H.264 unavailable, the Browser accepts the offer but rejects its video
+section in the answer. The shared receiving check uses this
+[JSEP rejection](https://www.rfc-editor.org/rfc/rfc8829.html#section-5.3.1), rather
+than inferring support from a codec list. P2P and SFU controls now retain that
+cause through route exhaustion instead of reporting only a media-route failure;
+the Native local bridge uses the same check and its existing failure path.
+An answer rejection alone does not identify the decoder or platform cause.
+
+Chrome 154 camera controls exposed a separate constraint bug: lowering a
+540x960 input to the 1280x720 ceiling produced a cropped 540x720 picture when
+both axes also carried `ideal` values. Maximum-only constraints produced
+405x720, retained portrait shape through a subsequent 360x640 setting, and
+restored 540x960. Camera startup and picker requests could likewise crop to their
+ideal axes; they now share an uncropped device-format request (`resizeMode:
+{ exact: "none" }`). Portrait thumbnails then measured 180x320 instead of 320x180.
+A landscape control retained shape within rounding. Shared live constraints use
+ceilings without a fixed aspect ratio or rotation listener, following the Media
+Capture distinction below. Synthetic devices do not establish physical phone
+orientation behavior.
+
+The boundary follows the
+[Media Capture specification](https://www.w3.org/TR/mediacapture-streams/#constrainable-interface):
+requested constraints, supported capabilities and actual settings have different
+owners. Capability ranges cannot describe every combination of resolution and
+frame rate; [WebRTC codec discovery](https://www.w3.org/TR/webrtc/#rtcrtpsender-interface)
+is optimistic and reserves no hardware resources. An advertised capability is
+therefore not proof that a particular encoder configuration can start.
+
+Wire representation follows the platform types for dimensions/bitrates and a
+positive finite frame rate; current capture admission remains narrower. This
+allows a reader to reject an unsupported operation without rejecting its room
+or control session. Fractional rates must not be silently truncated by Native's
+integer capture API. SFU metadata passes the same representation boundary and
+then its existing bounded admission before allocation. Capability descriptions
+may exceed local support, but cannot authorize larger local allocations.
+This separation also appears in
+[mediasoup RTP parameters and capabilities](https://mediasoup.org/documentation/v3/mediasoup/rtp-parameters-and-capabilities/).
+
+The operating-range review found that the inherited 15 fps / 2 Mbps
+source minimum and 12 Mbps maximum retained the earlier menu range; they were not
+codec limits. [LiveKit's screen-share presets](https://github.com/livekit/client-sdk-js/blob/main/src/room/track/options.ts)
+include 720p5 at 800 kbps. [YouTube's H.264 live-ingest guidance](https://support.google.com/youtube/answer/2853702?hl=en)
+recommends 50 Mbps for 4K60, but its ingest/re-encoding workload is not a Piik
+WebRTC operating policy. These references motivate testing both ends of the
+range, rather than inheriting the old controls or copying another service's cap.
+
+The initial numeric candidate admitted 1..60 integer fps and 0.1..50 Mbps. Its
+lower-output construction caps the usual 150 kbps floor by the source ceiling, in both Browser
+SFU and Native. Browser and Native preflight require positive encoded progress;
+the old one-frame tolerance could otherwise pass zero output at 1 fps.
+An earlier raw H.264 encode/decode control established local feasibility beyond
+the old range. Production Windows output-worker checks now cover H.264/VP8 at
+720p1/100 kbps, 720p5/800 kbps and 4K60/50 Mbps, including source-size replacement.
+Native encoded input also produced the expected half-size output at the low and
+high bounds. Each derivation retained its existing input-format generation;
+source changes still retire and replan that optional output through its owner.
+Browser loopback with the real sender controls also delivered decoded progress
+at all three settings and after replacing the 1 fps source. At 1 fps / 100 kbps,
+the production Browser HostPeer also delivered to two local receivers through
+ordinary senders and the shared encoding pool, for both H.264 and VP8. This
+bounded check does not cover room routing or physical-network recovery. The 1 fps H.264
+preflight passed; the 4K60 preflight selected VP8 on this machine even though
+explicit H.264 delivered frames. Admission is not a sustained-cadence guarantee.
+
+The Windows Native Host gate now exercises the actual numeric UI at 1 fps /
+100 kbps and 60 fps / 50 Mbps with both codecs. Fresh decoded frames retain the
+same Viewer stream through those changes, 4K/custom ceilings, pause, source
+replacement and Viewer recovery. Its generated window is smaller than 4K;
+this establishes ceiling application and continuity, not physical 4K capture.
+The Browser H.264 and VP8 SFU controls request 60 fps from actual 3840x2160
+synthetic input, decode high and lower outputs, retain the connection across
+both rate bounds and audio updates, and recover subscriptions after reload.
+Native WGC-to-SFU controls also pass both codecs and rate changes with the same
+connection; their source is smaller than 4K. Positive output does not establish
+sustained 60 fps on arbitrary devices or networks.
+
+A 3840x2160/60 Browser-to-Native fanout control failed the existing 30 fps
+performance threshold: its source produced about 32..33 fps and the two Viewers
+about 27 fps. A separate functional continuation retained that negative result
+and passed live quality changes, pause/resume, source-audio replacement and
+App-exit recovery. That run measured about 41 and 37 fps at the Viewers, still
+below the requested 60 fps. The controls establish continuity on this machine,
+not sustained 4K60 cadence; they do not justify custom quality floors or resets.
+
+The current Linux candidate also passes C11 compilation with warnings as errors
+and the headless GStreamer regressions, including low/high rate admission,
+source geometry, retirement and distinct Portal node-ID/serial targeting.
+This uses GStreamer 1.28.3 and libportal 0.9.1 on an isolated Alpine runner;
+its probe correctly reports no capture without a desktop session. Actual
+Portal capture and platform packaging remain separate checks.
+
+A uniform-noise 4K1/50 Mbps stress input reached the retained 4 MiB access-unit
+guard in both Native codecs; VP8 produced a 6,199,837-byte frame. The output was
+rejected rather than expanding allocation limits. Large bitrate/low-cadence
+requests are not permission for unbounded frames. These local controls establish
+useful operation and bounded failure, not sustained field quality or complete-route
+performance. Ignored controls and results are under
+`build/candidate-review/four-k60/` (`range-worker.cpp`, `range-browser.js`,
+`low-rate-pool.js`).
+
+The 2026-10-13 extension uses the existing H.264 Level 5.2 budget instead of
+the earlier menu maximum: see [FFmpeg's level table](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/h264_levels.c).
+The Windows production worker delivered H.264 and VP8 output for 1080p120/
+80 Mbps, 1440p144/100 Mbps and 1080p240/240 Mbps, including small-source changes
+and restoration. VP8 also delivered 5120x1440/60 at a 100 Mbps ceiling; this
+machine's hardware H.264 candidates rejected that width. These short synthetic
+checks establish useful output and retirement, not sustained cadence or bitrate.
+Browser WebRTC loopback also retained the requested sender limits and continued
+decoding all four sizes/rates with H.264 and VP8. These controls used synthetic
+canvas input; they do not establish screen-capture cadence or cross-device support.
+Setting both Windows decoder axis ceilings to 8192 made an existing 4K fixture
+fail at `BEGIN_STREAMING` with `E_OUTOFMEMORY`. Retaining platform provisioning
+defaults passed the same padding/visible-crop regression; SPS and output buffer
+guards remain in their existing owners. Raw H.264 1080p120/80 Mbps also decoded
+30/30 pictures. Both macOS and Linux architectures pass SDK compilation and
+geometry/profile checks; higher-range physical-device acceptance remains open.
+Local controls are in ignored `build/quality-polish/`.
+
+[WebRTC statistics](https://www.w3.org/TR/webrtc-stats/#dom-rtcicecandidatepairstats-availableoutgoingbitrate)
+describe estimated available capacity, not a configured send-rate ceiling;
+[Pion exposes it as a floating-point observation](https://github.com/pion/ice/blob/main/stats.go).
+Local in-memory Native control checks reproduced a 100 Mbps observation ceiling
+closing the entire connection. The corrected readers preserve high valid
+estimates, normalize invalid optional measurements and discard invalid quality
+samples without granting them control authority. Shared Go/TypeScript fixtures
+also cover sender, publication and receiver evidence. This establishes boundary
+behavior, not the cause of an unmatched field report or an improvement to ICE.
+
+| Meaning | Piik owner and representation |
+| --- | --- |
+| Quick presets | UI-local labels mapping to numeric picture/audio requests; adding a label does not extend the wire |
+| Host intent | One validated numeric size, frame-rate and bitrate request, distinct from measured output |
+| Available capability | Existing capture/receive/forward adapters report supported operations and bounded formats; unknown descriptive formats are unavailable |
+| Applied configuration | The existing share owner commits an admitted result under its current generation; failed or stale changes do not become saved preferences |
+| Live output | Existing capture and receiver evidence; WebRTC/LiveKit still own network adaptation |
+
+Dimensions, pixel counts/rates, encoded-frame bytes, allocations and concurrent
+outputs remain bounded before resource use. Remote capability claims cannot raise
+local limits. Reject malformed values and unauthorized commands; unsupported
+well-formed requests need a scoped failure, not an unrelated room disconnect.
+Use the existing generation and route operation, not a capability polling loop,
+general constraint solver or second recovery owner. Numeric limits describe
+ceilings, not a promise of a constant rate or resolution. A receiver's limits
+constrain its edge or existing local output group, not every Viewer in the room.
+
+Receiver-limit acceptance cannot rely on SDP matching alone. Chrome 154
+advertised H.264 Level 3.1 while decoding the 4K controls above. In isolated
+ordinary-sender checks, lowering the answer to Level 1.2, or adding VP8
+`max-fs=1200;max-fr=15`, did not reduce the received picture size. This is not
+evidence for a physical low-capability decoder. [RFC 6184's receive-level
+rules](https://www.rfc-editor.org/rfc/rfc6184.html#section-8.2.2) and actual
+framework behavior therefore need separate validation before promising
+automatic compatibility with smaller future capability sets.
 
 Codec support must distinguish encoding, decoding and encoded forwarding,
-including profile/packetization and SFU admission. AV1 and VP9 are candidates to
+including profile/packetization and SFU admission. Reuse SDP codec matching;
+describe only Native control and forwarding limits that it cannot express,
+instead of negotiating the same format twice. AV1 and VP9 are candidates to
 evaluate, not promised product formats. A late Viewer or relay that cannot
 receive the current encoded source needs an explicit policy; SDP negotiation
 alone cannot convert that source. Per-Viewer transcodes or room-wide codec
-switches are not implied by this proposal.
+switches are not implied by this proposal. This is also explicit in
+[mediasoup's producer/consumer capabilities](https://mediasoup.org/documentation/v3/mediasoup/rtp-parameters-and-capabilities/).
+[LiveKit's backup codec policy](https://github.com/livekit/client-sdk-js/blob/main/src/room/track/options.ts)
+uses another encoding or switches the publication; that compatibility has real
+CPU/bandwidth or continuity costs. Piik's embedded LiveKit components do not
+automatically provide its complete SDK policy. Keep H.264/VP8 as the initial
+compatibility path; admit a new format only with its whole-route evidence.
 
 Current discovery couples format to implementation (`hardwareH264` and
 `softwareVP8`), and Browser preference uses a VP8-specific fallback flag.
@@ -533,6 +904,50 @@ resolution/codec additions compatible minor releases. 4K itself does not
 inherently require a major; breaking an existing public contract does. Evaluate
 the Browser/App/Server and mixed-peer flows before freezing a replacement
 contract; avoid a general compatibility framework.
+
+### Audio And UI Proposal
+
+[#462](https://github.com/TNTcraftHIM/Piik/pull/462) requests 256/320 kbps Opus.
+The values are permitted by [RFC 7587](https://www.rfc-editor.org/rfc/rfc7587.html#section-6.1),
+whose receive-rate parameter spans 6,000..510,000 bit/s. This is a codec boundary,
+not a recommended default or proof of audible benefit. The current preset names
+also travel in authentication and Native commands: adding its two enum values
+causes the actual v1.9.2 readers to terminate those sessions. The PR's compatible
+release claim is therefore incorrect even though its audio use case is valid.
+
+The 2.0 candidate uses one numeric audio-bitrate ceiling through capture, sender,
+receiver and SFU; derive existing preset labels locally. Align receive admission
+with codec support instead of the largest UI shortcut. Keep the existing default
+while comparing actual Opus output and listening results for higher ceilings.
+The [numeric audio controls](./browser-screen-audio-quality.md#numeric-bitrate-assessment)
+establish local 256/320 kbps encoding and Browser reception, with separate
+receive-limit enforcement and a 320 kbps implementation ceiling. Full-range
+Opus wire validation remains independent of that current packet-size choice.
+[LiveKit's AudioPreset](https://docs.livekit.io/reference/client-sdk-js/interfaces/AudioPreset.html)
+likewise contains a numeric maximum bitrate; its
+[high-fidelity example](https://docs.livekit.io/transport/media/advanced/#hi-fi-audio)
+also considers stereo, source processing and redundancy. Raising bitrate alone
+does not establish studio quality, losslessness or multi-channel output.
+
+Keep Piik's compact presets and existing picture/sound settings disclosure.
+Expose custom numeric values with units and valid ranges there, without adding
+a permanent row for each new preset. Use supported-format selection for codecs,
+not an arbitrary text field. Preserve source aspect ratio without upscaling;
+distinguish selected limits from actual capture/decoded dimensions in existing
+details. Capability-related restrictions explain a real limitation briefly.
+The [OBS settings guide](https://obsproject.com/kb/obs-studio-overview#settings)
+supports a simple/default entry with further controls; Piik need not reproduce
+OBS's full output configuration. Existing visual/tooltip owners still apply,
+including narrow screens, both themes and visual mode.
+
+Start with numeric audio through the existing pipeline, then portrait/ultrawide
+geometry and 4K as a second concrete use case. A 4K path must review all platform
+capture/decoder bounds, encoded-frame limits and SFU admission. Admission and output must be tested
+at the actual profile, not inferred from a codec list. Check live changes,
+late/limited Viewers and relays, failure cleanup and resource rejection before
+freezing the 2.0 contract. Prefer a clear 1.x mismatch over a general legacy
+adapter. Future presets inside supported numeric semantics need no new enum;
+new formats still require actual implementation and an advertised capability.
 
 ## Implementation Boundary
 

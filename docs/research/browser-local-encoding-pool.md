@@ -101,6 +101,31 @@ around fallback was 271 ms for H264 and 80 ms for VP8. Source-wide fallback
 therefore has a measurable handoff cost, even without a resolution drop or
 connection failure. This does not establish low-end hardware capacity.
 
+An unmatched negotiated codec is instead connection-local. A Chrome 154
+late-Viewer control reproduced all members losing pooling when only the new
+Viewer advertised different codec parameters. Scoped fallback now preserves
+the first Viewer's producer and delivers fresh pictures to both Viewers in
+VP8 1080p and H264 4K controls. Unit counterfactuals cover admission and active
+codec changes; producer failure retains its existing source-wide fallback.
+These controls establish membership isolation, not enforcement of physical
+decoder limits or the cause of field quality fluctuations.
+
+### Local Connection Failure Control
+
+On 2026-10-08, Windows headless Chrome 154 ran the actual `HostPeer` and pool
+with a moving 640x360 VP8 source. mDNS host candidates supported one producer
+and two receivers. Discarding only the producer's ICE candidates triggered its
+eight-second timeout; both existing P2P connections then delivered 30 ordinary
+decoded frames each, retaining the source and no producer groups.
+
+This loopback-origin diagnostic does not test public-origin permission,
+Chrome/Firefox LAN interoperability or public-path quality. In
+[#465](https://github.com/TNTcraftHIM/Piik/issues/465), the successful repeat
+changed permission and IP masking together. Neither is an isolated cause;
+[HTTP App discovery](https://developer.chrome.com/blog/local-network-access)
+and [WebRTC connectivity](https://chromestatus.com/feature/5065884686876672)
+need separate evidence. This control is not a release acceptance gate.
+
 ### Balanced Startup And Recovery
 
 Serial Chrome 152 checks on 2026-09-25 reproduced two composition defects in
@@ -661,9 +686,16 @@ npx tsx scripts/browser-local-pool-probe.ts carrier --1080 --background
 npx tsx scripts/browser-local-pool-probe.ts carrier --display --quiet-start --1080 --h264 --av --lifecycle
 npx tsx scripts/browser-local-pool-probe.ts ordinary --display --quiet-start --1080 --av --lifecycle
 npx tsx scripts/browser-local-pool-probe.ts carrier --display --1080 --h264 --av --network --auto --rate=400000 --preference=balanced
+npx tsx scripts/browser-local-pool-probe.ts carrier --display --size=3840x2160 --h264 --single --lifecycle
+npx tsx scripts/browser-local-pool-probe.ts carrier --size=2160x3840 --h264 --relay --late
 ```
 
 Add `--h264`, `--single` or `--late` for the corresponding case. Set
+`--size=WIDTHxHEIGHT` for a numeric source/quality ceiling within current 30 fps
+capture bounds; this also requests that window size for real tab capture.
+Chrome's content area and capture toolbar can make the actual surface smaller.
+The pool check expects one output owner per compatible allocation, not one
+owner for children with different bandwidth budgets. Set
 `--network --auto --short-pulse` for a 45-second warmup, one-second constraint
 and 40-second recovery instead of the ordinary 14-second constraint. Set
 `CHROME_PATH` for another installed Chromium binary. `--auto` extends the

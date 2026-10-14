@@ -1,6 +1,6 @@
 # Current Status
 
-Last updated: 2026-10-06
+Last updated: 2026-10-14
 
 This is the compact execution/deployment index. Product modules own behavior,
 [verification status](./verification-status.md) owns unresolved physical limits,
@@ -8,7 +8,9 @@ and Git/PRs own completed history.
 
 ## Accepted Release Contract
 
-- Browser/server v23, Native control v9 and capture v7 form the current contract.
+- The 2.0 release boundary uses Browser/server v24, Native control v10 and
+  capture v7. App and Site must upgrade together; 1.x cannot participate in a
+  2.0 session. SQLite schema 2 is unchanged.
   [Versioning](./standards/versioning.md#public-compatibility-promise) owns
   compatibility between published Web/App/Server versions.
 - Hosted Server defaults to SQLite schema 2. Room authority has no inactivity
@@ -54,15 +56,31 @@ Release artifacts and operator deployment records own delivery completion;
 
 ## Current Work
 
-The public baseline retains Browser/server v23, Native control v9, capture v7,
-SQLite schema 2 and the 1440p ceiling. Hosted empty-room retention and capacity
-guidance preserve indefinite retention by default. The accepted Demo policy is
-one hour without authenticated participants; the private deployment retains the
-default. Operator records own activation, database and postflight evidence.
-4K and resolution/capability expansion are not planned for this phase.
-Native Magicsock remains a separate experiment, outside product integration.
-Immutable release artifacts own delivery completion; [TODO](./todo.md#now) owns
-remaining work.
+2.0 separates numeric media requests from presets and bounded runtime admission,
+retains successfully applied quality settings, and lets App serve an approved
+Site independently of Local/public room startup. It also adds detached chat on
+supporting desktop Browsers. Media, room authority and P2P-first routing keep
+their existing owners; [product standards](./standards/README.md) define the
+accepted behavior.
+
+Optional coordinated Native UDP preparation augments the existing retry owner.
+The [network laboratory](./research/network-lab.md) covers all Browser/App
+pairings, recovery, SFU policies and successful two-App preparation through
+sequential kernel NAT. These results do not establish a public success rate.
+Magicsock remains excluded: its [controlled comparison](./research/nat-traversal.md#integration-cost-and-recovery-controls)
+established no additional reachability worth its integration costs.
+
+The [media assessment](./research/native-client-media.md#media-capability-extension-assessment)
+owns bounded output and live-control evidence. Physical macOS/Linux capture,
+limited decoders and sustained game/4K use retain the limits in
+[verification status](./verification-status.md). Additional codecs, room voice,
+surround delivery and end-to-end HDR remain outside this phase.
+
+The owner authorized publication after final acceptance, without a separate
+field beta. Immutable release artifacts and operator records own exact delivery
+and postflight; [TODO](./todo.md#now) owns remaining product work. Hosted room
+retention stays indefinite by default. Demo uses one hour without authenticated
+participants; the private deployment keeps the default.
 
 ## Deployment
 
@@ -73,8 +91,8 @@ record own exact identity and postflight results.
 
 The existing deployment uses one Go process for Web, room authority/signaling,
 Binding-only STUN on UDP 3478/3479/3480 and optional SFU on UDP 7882. nginx owns
-HTTPS; external LiveKit/coturn services remain disabled. Participants, routes and
-media remain process-only. This private service is not a public demonstration.
+HTTPS. Participants, routes and media remain process-only. This private service
+is not a public demonstration.
 
 The separate US [public demo](https://demo.piik.tv) is deployed with open site
 entry, persistent room authority and P2P-only media. Cloudflare fronts HTTP/WSS

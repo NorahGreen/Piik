@@ -98,28 +98,51 @@ See the [App guide](../../cmd/piik-app/README.md) for package and runtime detail
 
 | Mode | When to choose it | What to keep in mind |
 | --- | --- | --- |
-| **Local room** | Friends are on the same local network. | If several entries appear under **Local invitation address**, choose the interface and IP on your friends' network. Your computer must be reachable from theirs. A local site passphrase is optional. |
+| **Local room** | Friends are on the same local network. | With multiple interfaces, expand **Local invitation address** and select the interface and IP on your friends' network. Your computer must be reachable from theirs. A local site passphrase is optional. |
 | **Public invite** | Friends are elsewhere and you want a temporary invitation. | Needs Internet access. The public address lasts for this App run. |
-| **Connect to Site** | Your group already has a Piik site. | Enter its address; the App adds capture capabilities to the site's sharing page. |
 
 For Local room and Public invite, expand **Site passphrase** to set an optional
 access passphrase.
 
-For **Connect to Site**, enter a domain such as `demo.piik.tv` or paste the full
-site address, then choose **Open Piik**. HTTPS is added when omitted; for an HTTP
-site, include `http://`. Enter the site's passphrase on the page that opens if asked.
-After opening the site through the App once, the same browser remembers that
-entry. Keep the App running with that site configured and you can visit the
-address directly. **Start sharing** opens the selector; choose **Apps / Windows**
-or **Screens** for App capture. Allow local-network access if the browser asks.
-In another browser, in a private window, or after clearing site data, enter through
-the App again. For a different site, update the address in the App first.
+**Already have a Piik site?** Keep the App running, open the site and click
+**App** at the top. Check the address on the local confirmation page, then choose
+**Allow access**. Enter any site passphrase on the site itself. Allow local-network
+access if the browser asks. No room mode needs to be selected in the launcher.
+You can also choose **Connect Piik App** inside the **Start sharing** source
+selector; its list updates as soon as the connection completes.
+If connection fails, the App button offers **Retry** and **Download App**.
+You can still share and watch in your browser.
+
+The same browser remembers this connection. On later visits, **Start sharing**
+offers **Apps / Windows** and **Screens** from the running App. In another browser,
+in a private window or after clearing site data, connect again. The same exact
+site already approved by App needs no repeat confirmation. The launcher
+shows the approved site; **×** beside its address revokes access. Approving a different site
+replaces the previous one and ends that site's App connections.
+To use your App with a friend's new public-invitation address, connect and approve
+that address again. Sharing-quality settings saved in App survive the address change.
 
 **A page that opens does not guarantee a video connection.** Public invite gives
 your room a temporary web address; picture and sound still travel between
 participants. This mode has no media-server fallback, and the temporary address
 has no uptime guarantee. All modes need a working UDP media path.
 The [App guide](../../cmd/piik-app/README.md#modes) explains the connection setup.
+
+### Upgrading
+
+**Piik 2.0 and 1.x cannot be used together.** The App and the site it connects to
+need the same major version. Read the release notes on
+[GitHub](https://github.com/TNTcraftHIM/Piik/releases/latest) or
+[Gitee](https://gitee.com/TNTcraftHIM/Piik/releases) before upgrading.
+
+- **Local room or Public invite:** stop sharing, close the old App and extract
+  the complete new package. Start the new App and send a fresh invitation.
+- **An existing site:** the administrator updates the Server first, following
+  the [update guide](../operations/service-management.md). Then update the Apps
+  connecting to that site and refresh all sharing and viewing pages.
+
+Restarting an App or Server interrupts active shares. This upgrade does not
+change the room database schema.
 
 ## Share from an existing site
 
@@ -145,6 +168,28 @@ To use App capture on that same site, follow [Connect to Site](#choose-an-app-mo
 The site manages rooms and invitations; the App supplies native capture.
 If its operator has enabled SFU forwarding, turn off **Privacy mode** before
 sharing to allow that fallback. The project's online site uses P2P only.
+
+## Picture and sound settings
+
+Open **Sharing settings** below the picture to adjust picture and audio quality.
+
+- Choose a picture preset, or enter width and height under **Resolution limit**.
+  Piik preserves the source's proportions within that ceiling, including portrait
+  and ultrawide pictures.
+- Sliders cover 15–60 fps in steps of 5 and 2–12 Mbps in steps of 0.5. You can also enter an
+  **FPS limit** from 1 to 240 fps and a **Bitrate limit** from 0.1 to 240 Mbps.
+  Values outside those slider steps show **Custom**; **Use common range**
+  selects the nearest available slider value.
+  The frame-rate limit depends
+  on picture size: for example, 1080p240, 1440p144 and 4K60 are accepted requests.
+- Choose an audio preset, or enter an **Audio bitrate limit** from 6 to 320 kbps.
+
+The selectable range depends on picture size and the connected App. Picture and sound
+still adapt to the source, device and available bandwidth.
+
+Piik remembers your applied settings for the next visit. Browser-only use remembers
+them for the current site; opening Piik through an updated App also keeps them
+when your public-invite address changes.
 
 ## Add your voice
 
@@ -180,6 +225,12 @@ This excludes one process and its children. Other apps remain audible, including
 those playing through other output devices.
 It does not mute your Piik microphone or prevent speaker sound reaching a microphone.
 
+If a virtual microphone remains audible with Piik's microphone off, temporarily
+turn off **System sound** to compare. If the voice disappears, check the mixer's
+playback output and monitoring, or capture only the desired application's window
+audio. Excluding a voice app does not also exclude a separate mixer that plays
+your processed voice, even through a virtual output device.
+
 While sharing, use **Sharing settings → Sound** to change system sound or the
 excluded app without stopping the share. If the app closes or restarts, source
 audio stops; refresh the application list and select it again.
@@ -196,6 +247,12 @@ Once the host starts the first share, participants can select **Chat** below the
 sofa to send messages. Select a person on the sofa to open their reaction menu:
 your own reactions appear above you; reactions sent to a friend fly towards them.
 The chat window can be moved and resized without rearranging the page.
+
+Supported desktop browsers show **Always-on-top chat** in the window's top-right
+corner, so you can read messages while playing. Keep the Piik page open; closing
+the small window returns chat to the page. Use a windowed or borderless game;
+exclusive fullscreen may cover the chat. The window cannot show the game through
+its background or let mouse clicks pass through.
 
 **On screen**, beside the message box or in the viewer's playback bar, shows new
 messages over the picture. It is off by default and only changes your own view.

@@ -3,8 +3,8 @@ import { createContext, runInContext } from "node:vm";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import {
-  QUALITY_PROFILES, qualitySettingsEqual, qualitySettingsLabel,
-  resolveScreenAudioQuality, videoQualitySettingsEqual,
+  QUALITY_PROFILES, qualitySettingsEqual, qualitySettingsLabel, qualityResolutionEqual,
+  screenAudioBitrate, videoQualitySettingsEqual, supportsCaptureProfile, videoCaptureLimits, MAX_SCREEN_AUDIO_BITRATE,
   type QualitySettings,
 } from "../src/client/media/quality";
 import { NativeSenderPeer } from "../src/client/native/native-sender-peer";
@@ -13,19 +13,21 @@ import { nativeCaptureTargetKey } from "../src/client/native/capture-selection";
 import { NativeMediaBridgeError } from "../src/client/native/media-bridge";
 import { reconcileBoundedMediaChildren } from "../src/client/webrtc/media-assignment";
 import { debugError, debugEvent, debugOperation } from "../src/client/lib/debug";
+import { ApiError } from "../src/client/lib/api";
 import { hostActionErrorNotice, hostFailureCode, isCapturePermissionFailure } from "../src/client/pages/host-page-notices";
 
 // Exercise the actual page owners without mounting capture hardware or a Browser.
 const source = ts.createSourceFile("HostPage.tsx", readFileSync(
   new URL("../src/client/pages/HostPage.tsx", import.meta.url), "utf8",
 ), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-const owners = new Set(["changeQuality", "commitQuality", "handleSignalMessage",
+const owners = new Set(["changeQuality", "commitQuality", "rememberQuality", "loadAppQualityPreference", "handleSignalMessage",
   "switchSource", "watchCaptureEnd", "switchNativeSource", "finishSourceSwitch", "replaceBrowserStream", "recoverBrowserFanout", "disposeNativeShare",
   "acquireNativeClient", "requestSharing", "startNativeShare", "startBrowserNativeIngress",
   "ownNativeClient", "discardNativeClient", "releaseUnusedNativeClient", "closeCaptureSourcePicker",
   "openCaptureSourcePicker", "startBrowserShareFromPicker", "startNativeShareFromPicker",
   "startSharing", "connectRoomSignal", "createReplacementRoom", "beginRoomMutation", "finishRoomMutation", "setCaptureError", "changeMicrophone", "toggleSharingPause",
-  "startPeer", "reconcileHostChildren", "setNotice", "setNoticeKey", "setStatusNotice", "setNoticeError", "setNoticeErrorKey", "endSharing", "hostTerminationKey", "copyRoomLink", "isCurrentRoomAuthority"]);
+  "startPeer", "reconcileHostChildren", "setNotice", "setNoticeKey", "setStatusNotice", "setNoticeError", "setNoticeErrorKey", "endSharing", "disposeResources", "hostTerminationKey", "copyRoomLink", "isCurrentRoomAuthority",
+  "handleRoomAccessFailure", "replaceCurrentRoom", "forgetRoom", "endRoomSession"]);
 
 const functions: string[] = [];
 function collect(node: ts.Node): void {
@@ -70,10 +72,10 @@ function fixture(launchedByClient = true) {
     stopReceive: vi.fn(async () => undefined), stopShare: vi.fn(async () => undefined) };
   const route = { updateProfile: vi.fn(async () => true), resyncAuthoritative: vi.fn(async (): Promise<void> => undefined) };
   const state = {
-    debugError, debugEvent, debugOperation, NativeCompatibilityError, NativeRequestError, NativeMediaBridgeError, isCapturePermissionFailure, hostFailureCode, DOMException,
-    launchedByClient, hostRoomSessionAvailable: false,
-    NativeClient: { connect: vi.fn(async (): Promise<typeof client | null> => null) },
-    nativeClientConnectRef: ref<Promise<typeof client | null> | null>(null),
+    debugError, debugEvent, debugOperation, NativeCompatibilityError, NativeRequestError, NativeMediaBridgeError, isCapturePermissionFailure, hostFailureCode, DOMException, AbortController,
+    launchedByClient, isClientActivated: vi.fn(() => launchedByClient), hostRoomSessionAvailable: false,
+    NativeClient: { connect: vi.fn(async (_options?: { signal: AbortSignal }): Promise<typeof client | null> => null) },
+    nativeClientConnectRef: ref<{ promise: Promise<typeof client | null>; controller: AbortController } | null>(null),
     ownNativeClient: vi.fn(), setJoiningRoom: vi.fn(), startSharing: vi.fn(), openCaptureSourcePicker: vi.fn(),
     videoCodecRef: ref({ primary: "h264" }),
     videoCodecModeRef: ref("h264"), MAX_ENDPOINT_MEDIA_CHILDREN: 2,
@@ -87,10 +89,12 @@ function fixture(launchedByClient = true) {
     setCopiedRoomLink: vi.fn(), setPhase: vi.fn(), roomInitializationRef: ref(Promise.resolve()), roomRef: ref(null),
 
     createRoom: vi.fn(async () => { throw new Error("must not create an empty room"); }),
-    readPreferredRoomId: () => null, disposeResources: vi.fn(), ApiError: class extends Error {},
+    readPreferredRoomId: () => null, disposeResources: vi.fn(), ApiError,
     NativeMediaBridge: vi.fn(function (_shareId: string, _client: unknown, _onFailed: () => void) { return bridge; }), manualVideoCodecPreference: vi.fn(),
     phase: "live", qualitySettingsRef: ref<QualitySettings>(original), advancedQualityRef: ref<QualitySettings>(original),
     qualityChangeRef: ref<object | null>(null), pendingQualityChangeRef: ref<QualitySettings | null>(null),
+    appQualityPreferenceRef: ref<{ save: (quality: QualitySettings) => void } | null>(null),
+    qualityPreferenceEditedRef: ref(false), pendingAppQualityPreferenceRef: ref<QualitySettings | null>(null),
     activeGenerationRef: ref<number | null>(1), streamRef: ref<typeof stream | null>(stream), sourceSwitchRef: ref<object | null>(null),
     nativeSourceAudioRef: ref<boolean | undefined>(undefined), setMicrophoneEnabled: vi.fn(),
     microphoneVoiceProcessing: true, setMicrophoneVoiceProcessing: vi.fn(),
@@ -101,12 +105,13 @@ function fixture(launchedByClient = true) {
     nativeEventCleanupRef: ref(null), nativeShareCleanupRef: ref(Promise.resolve()),
     peersRef: ref(new Map([["viewer", peer]])), hostProvisionalChildRef: ref(null), hostSfuRouteRef: ref(route),
     signalRef: ref({ setHostQualitySettings: vi.fn(), send: vi.fn() }),
-    setQualitySettings: vi.fn(), setAdvancedQuality: vi.fn(), setChangingQuality: vi.fn(),
+    setQualitySettings: vi.fn(), setAdvancedQuality: vi.fn(), setChangingQuality: vi.fn(), savePreferredQuality: vi.fn(),
     setNoticeValue: vi.fn(), setNoticeError: vi.fn(), readableError: hostActionErrorNotice,
     setDetails: vi.fn(), setNativeActive: vi.fn(),
     applyCaptureProfile: vi.fn(async (_stream: unknown, profile: QualitySettings) => { physical = profile; }),
     captureDetails: () => ({}),
-    qualitySettingsEqual, videoQualitySettingsEqual, resolveScreenAudioQuality, qualitySettingsLabel,
+    qualitySettingsEqual, qualityResolutionEqual, videoQualitySettingsEqual, screenAudioBitrate, qualitySettingsLabel,
+    supportsCaptureProfile, videoLimits: videoCaptureLimits(), audioBitrateCeiling: MAX_SCREEN_AUDIO_BITRATE,
     say: (key: string) => key, syncHostSfuQualityWarning: () => null,
     NativeSenderPeer, discardPreparedHostChild: vi.fn(), removePeer: vi.fn(), startPeer: vi.fn(async () => undefined),
     nativePreviewTailRef: ref(Promise.resolve()), setSwitchingSource: vi.fn(),
@@ -127,14 +132,16 @@ function fixture(launchedByClient = true) {
   const start = context.startSharing;
   const startChild = context.startPeer;
   const openPicker = context.openCaptureSourcePicker;
+  const dispose = context.disposeResources as (notifyServer: boolean, keepRoomSession?: boolean) => void;
   const writeNoticeError = context.setNoticeError;
   state.setNoticeError.mockImplementation(writeNoticeError);
   context.setNoticeError = state.setNoticeError;
   context.startSharing = state.startSharing;
   context.startPeer = state.startPeer;
   context.openCaptureSourcePicker = state.openCaptureSourcePicker;
+  context.disposeResources = state.disposeResources;
   return { ...state, peer, client, route, track, bridge, physical: () => physical,
-    context, startChild, openPicker: openPicker as () => Promise<void>,
+    context, startChild, dispose, openPicker: openPicker as () => Promise<void>,
     closePicker: context.closeCaptureSourcePicker as () => void,
     releaseUnused: context.releaseUnusedNativeClient as () => void,
     disposeNative: context.disposeNativeShare as (expectedShare?: string) => void,
@@ -150,6 +157,22 @@ function fixture(launchedByClient = true) {
       routePolicy: {}, routeRevision: 1, endpointMediaCopyCapacity: 2 }, 1, true, null),
     switchSource: () => context.switchNativeSource(client, {}, false, {}),
   };
+}
+
+function useRealResourceDisposal(current: ReturnType<typeof fixture>): void {
+  current.peersRef.current.clear();
+  Object.assign(current.hostSfuRouteRef, { current: null });
+  Object.assign(current.context, {
+    codecProbeAbortRef: ref(null), VP8_ONLY_VIDEO_CODEC: { primary: "vp8" },
+    setResolvedVideoCodec: vi.fn(), setHostSfuQualityWarning: vi.fn(),
+    setInteractionSession: vi.fn(), browserVideoPoolRef: ref(null),
+    setMicrophonePending: vi.fn(), retiringStreamRef: ref(null), iceConfigRef: ref(null),
+    setStream: vi.fn(), setPeerSnapshots: vi.fn(), setParticipantPresence: vi.fn(),
+    viewerQualityEvidenceStore: { clear: vi.fn(), getSnapshot: () => new Map() },
+    cancelViewerQualityEvidenceRender: vi.fn(), setViewerQualityEvidence: vi.fn(),
+    setSignalStatus: vi.fn(), sharingPausedRef: ref(false), setSharingPaused: vi.fn(),
+  });
+  current.disposeResources.mockImplementation(current.dispose);
 }
 
 describe("Camera replacement ownership", () => {
@@ -208,6 +231,7 @@ describe("Host room ownership", () => {
     class Signal {
       interactions = {};
       stop = vi.fn();
+      stopSharing = vi.fn();
       constructor(public identity: { roomId: string; token: string; roomOnly?: true; shareGeneration?: string },
         public events: {
           onMessage(message: unknown): void;
@@ -217,18 +241,17 @@ describe("Host room ownership", () => {
       ownsHostRoom(roomId: string, token: string) { return this.identity.roomId === roomId && this.identity.token === token; }
       wantsHostPublication(generation: string) { return this.identity.shareGeneration === generation && this.identity.roomOnly !== true; }
     }
-    const forgetRoom = vi.fn(() => { Object.assign(current.roomRef, { current: null }); return true; });
+    const forgetRoom = vi.fn(current.context.forgetRoom);
     Object.assign(current.roomRef, { current: room });
     Object.assign(current.signalRef, { current: null });
     current.generationRef.current = 1;
     Object.assign(current.context, {
       SignalingClient: Signal, hostRoomSessionAvailable: true, roomInteractionsAvailable: true,
-      connectionAttemptProgress4:true,
       visRef: ref(false), hostClientIdRef: ref(null), displayNameRef: ref("Host"),
       getStableClientId: () => "host-client", defaultHostDisplayName: () => "Host", readDisplayName: () => "Host",
       setDisplayName: vi.fn(), setDisplayNameDraft: vi.fn(), setDisplayNameError: vi.fn(),
       setInteractionSession: vi.fn(), setSignalStatus: vi.fn(), forgetRoom,
-      onAuthorizationRequired: vi.fn(),
+      onAuthorizationRequired: vi.fn(), clearHostRoom: vi.fn(), writePreferredRoom: vi.fn(),
       hostServerErrorNotice: (code: string) => code,
     });
     return { ...current, room, signals, forgetRoom, connect: (value = room) => current.context.connectRoomSignal(value) as Signal };
@@ -266,6 +289,162 @@ describe("Host room ownership", () => {
       kind: "key", key: "host.roomInvalid", vars: undefined,
       target: "television", comic: "room-not-found", tone: "bad",
     });
+  });
+
+  it.each(["INVALID_TOKEN", "HOST_ALREADY_CONNECTED", "room-closed", "terminated", "access-required"])(
+    "retires idle native selection and its late results on %s", async event => {
+      for (const stage of ["ready", "discovery", "enumeration"]) {
+        const current = roomFixture();
+        useRealResourceDisposal(current);
+        current.context.phase = "idle";
+        current.activeGenerationRef.current = null;
+        current.shareGenerationRef.current = null;
+        current.nativeShareGenerationRef.current = null;
+        const discovery = deferred<typeof current.client>();
+        const enumeration = deferred<never[]>();
+        if (stage === "discovery") {
+          current.nativeClientRef.current = null;
+          current.NativeClient.connect.mockReturnValueOnce(discovery.promise);
+        } else if (stage === "enumeration") current.client.sources.mockReturnValueOnce(enumeration.promise);
+        const signal = current.connect();
+        const selecting = current.openPicker();
+        if (stage === "ready") await selecting;
+        else await vi.waitFor(() => expect(stage === "discovery"
+          ? current.NativeClient.connect : current.client.sources).toHaveBeenCalledOnce());
+        expect(current.nativeSourceRequestRef.current).not.toBeNull();
+
+        if (event === "terminated") signal.events.onTerminated("SIGNAL_TERMINATED");
+        else if (event === "access-required") signal.events.onAccessRequired();
+        else signal.events.onMessage(event === "room-closed" ? { type: event } : { type: "error", code: event });
+        expect(current.nativeSourceRequestRef.current).toBeNull();
+        expect(current.nativeSourcePathRef.current).toBeNull();
+        expect(current.nativeClientConnectRef.current).toBeNull();
+        discovery.resolve(current.client);
+        enumeration.resolve([]);
+        await selecting;
+        expect(current.nativeClientRef.current).toBeNull();
+        expect(current.client.close).toHaveBeenCalledOnce();
+        expect(current.setNativeSources).toHaveBeenLastCalledWith(null);
+        expect(current.createRoom).not.toHaveBeenCalled();
+        if (stage === "discovery") expect(current.client.sources).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it.each([false, true])("retires a room rejected by an access update (sharing=%s)", async sharing => {
+    const current = roomFixture();
+    useRealResourceDisposal(current);
+    current.context.phase = sharing ? "live" : "idle";
+    current.nativeModeRef.current = sharing;
+    if (!sharing) {
+      current.activeGenerationRef.current = null;
+      current.shareGenerationRef.current = null;
+      current.nativeShareGenerationRef.current = null;
+      current.streamRef.current = null;
+    }
+    const signal = current.connect();
+    await current.openPicker();
+    current.context.handleRoomAccessFailure(new ApiError("Room not found", 404), current.room);
+    expect(current.roomRef.current).toBeNull();
+    expect(current.signalRef.current).toBeNull();
+    expect(signal.stop).toHaveBeenCalledOnce();
+    expect(current.activeGenerationRef.current).toBeNull();
+    expect(current.track.stop).toHaveBeenCalledTimes(sharing ? 1 : 0);
+    expect(current.client.close).toHaveBeenCalledOnce();
+    expect(current.setNativeSources).toHaveBeenLastCalledWith(null);
+    expect(current.setNoticeValue).toHaveBeenLastCalledWith(expect.objectContaining({
+      key: "host.roomInvalid", target: "television", comic: "room-not-found", tone: "bad",
+    }));
+  });
+
+  it("retires the room session when a replacement fails after capture was stopped", async () => {
+    const current = roomFixture();
+    useRealResourceDisposal(current);
+    const response = deferred<never>();
+    current.context.replaceOwnedRoom = vi.fn(() => response.promise);
+    const signal = current.connect();
+    const replacing = current.context.replaceCurrentRoom();
+    current.context.endSharing({ key: "host.stopNotice" });
+    expect(signal.stop).not.toHaveBeenCalled();
+    expect(current.signalRef.current).toBe(signal);
+    response.reject(new ApiError("Room not found", 404));
+    await replacing;
+    expect(current.roomRef.current).toBeNull();
+    expect(current.signalRef.current).toBeNull();
+    expect(signal.stop).toHaveBeenCalledOnce();
+    expect(current.createRoom).not.toHaveBeenCalled();
+    expect(current.roomMutationRef.current).toBeNull();
+  });
+
+  it.each(["replace", "missing-room"] as const)("retires an unclaimed %s result after page exit", async path => {
+    for (const stage of ["response", "claim", "accepted"] as const) {
+      const current = roomFixture();
+      current.context.phase = "idle";
+      current.activeGenerationRef.current = null;
+      const replacement = { ...current.room, roomId: "5678", hostToken: "replacement-token" };
+      const response = deferred<typeof replacement>();
+      const claim = deferred<void>();
+      const writeHostRoom = vi.fn(async (_room: unknown, owns: () => boolean) => {
+        await claim.promise;
+        return owns();
+      });
+      const closeAbandonedRoom = vi.fn();
+      const request = vi.fn(() => response.promise);
+      Object.assign(current.context, {
+        replaceOwnedRoom: path === "replace" ? request : async () => { throw new ApiError("Room not found", 404); },
+        createRoom: request, hostRoomFromCreated: (room: unknown) => room,
+        replaceViewerInvite: vi.fn(), writeHostRoom, closeAbandonedRoom,
+      });
+      const replacing = current.context.replaceCurrentRoom();
+      await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+      if (stage === "response") current.roomMutationRef.current = null;
+      response.resolve(replacement);
+      if (stage === "claim") {
+        await vi.waitFor(() => expect(writeHostRoom).toHaveBeenCalledOnce());
+        current.roomMutationRef.current = null;
+      }
+      claim.resolve();
+      await replacing;
+      if (stage === "accepted") {
+        expect(closeAbandonedRoom).not.toHaveBeenCalled();
+        expect(current.roomRef.current).toBe(replacement);
+        expect(current.setRoom).toHaveBeenCalledWith(replacement);
+      } else {
+        expect(closeAbandonedRoom).toHaveBeenCalledExactlyOnceWith(replacement);
+        expect(current.roomRef.current).toBe(current.room);
+        expect(current.setRoom).not.toHaveBeenCalled();
+        expect(current.setNoticeError).not.toHaveBeenCalled();
+        if (stage === "response") expect(writeHostRoom).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it("does not recreate a missing room after its replacement operation was retired", async () => {
+    const current = roomFixture();
+    current.context.phase = "idle";
+    current.activeGenerationRef.current = null;
+    const response = deferred<never>();
+    current.context.replaceOwnedRoom = () => response.promise;
+    const replacing = current.context.replaceCurrentRoom();
+    current.roomMutationRef.current = null;
+    response.reject(new ApiError("Room not found", 404));
+    await replacing;
+    expect(current.createRoom).not.toHaveBeenCalled();
+    expect(current.setNoticeError).not.toHaveBeenCalled();
+  });
+
+  it("ignores an old room's failed access update after another room owns the session", () => {
+    const current = roomFixture();
+    useRealResourceDisposal(current);
+    const replacement = { ...current.room, hostToken: "replacement-token" };
+    Object.assign(current.roomRef, { current: replacement });
+    const signal = current.connect(replacement);
+    current.context.handleRoomAccessFailure(new ApiError("Room not found", 404), current.room);
+    expect(current.roomRef.current).toBe(replacement);
+    expect(current.signalRef.current).toBe(signal);
+    expect(signal.stop).not.toHaveBeenCalled();
+    expect(current.client.close).not.toHaveBeenCalled();
+    expect(current.setNoticeValue).not.toHaveBeenCalled();
   });
 
   it.each(["INVALID_TOKEN", "HOST_ALREADY_CONNECTED", "room-closed", "terminated", "access-required"])(
@@ -424,6 +603,92 @@ describe("Host room-link copy feedback", () => {
 });
 
 describe("Host quality ownership", () => {
+  it("rejects unsupported settings without changing capture, room or saved intent", async () => {
+    const current = fixture();
+    await current.change({ ...original, maxFramerate: 480, maxBitrate: 40_000_000 });
+    expect(current.qualitySettingsRef.current).toEqual(original);
+    expect(current.applyCaptureProfile).not.toHaveBeenCalled();
+    expect(current.signalRef.current.setHostQualitySettings).not.toHaveBeenCalled();
+    expect(current.context.savePreferredQuality).not.toHaveBeenCalled();
+    expect(current.advancedQualityRef.current).toEqual(original);
+  });
+
+  it("ignores an unsupported App preference without erasing it", async () => {
+    const current = fixture();
+    current.activeGenerationRef.current = null;
+    const preference = { read: vi.fn(async () => ({ ...original, maxFramerate: 480 })), save: vi.fn() };
+    current.context.AppQualityPreference = { connect: vi.fn(async () => preference) };
+    await current.context.loadAppQualityPreference(new AbortController().signal);
+    expect(current.qualitySettingsRef.current).toEqual(original);
+    expect(preference.save).not.toHaveBeenCalled();
+    expect(current.NativeClient.connect).not.toHaveBeenCalled();
+  });
+
+  it("restores App preferences without acquiring media or changing a room", async () => {
+    const current = fixture();
+    current.activeGenerationRef.current = null;
+    const preference = { read: vi.fn(async () => lower), save: vi.fn() };
+    current.context.AppQualityPreference = { connect: vi.fn(async () => preference) };
+    await current.context.loadAppQualityPreference(new AbortController().signal);
+    expect(current.qualitySettingsRef.current).toEqual(lower);
+    expect(current.NativeClient.connect).not.toHaveBeenCalled();
+    expect(current.signalRef.current.setHostQualitySettings).not.toHaveBeenCalled();
+    expect(preference.save).not.toHaveBeenCalled();
+  });
+
+  it.each(["explicit", "room", "sharing", "creating", "retired"])(
+    "does not let a late App preference override %s ownership", async (owner) => {
+      const current = fixture();
+      current.activeGenerationRef.current = null;
+      const pending = deferred<QualitySettings>();
+      const preference = { read: vi.fn(() => pending.promise), save: vi.fn() };
+      current.context.AppQualityPreference = { connect: vi.fn(async () => preference) };
+      const controller = new AbortController();
+      const loading = current.context.loadAppQualityPreference(controller.signal);
+      await Promise.resolve();
+      if (owner === "explicit") current.qualityPreferenceEditedRef.current = true;
+      if (owner === "room") current.context.commitQuality({ ...original });
+      if (owner === "sharing") current.activeGenerationRef.current = 2;
+      if (owner === "creating") current.roomMutationRef.current = {};
+      if (owner === "retired") controller.abort();
+      pending.resolve(lower);
+      await loading;
+      expect(current.qualitySettingsRef.current).toEqual(original);
+      expect(preference.save).not.toHaveBeenCalled();
+    },
+  );
+
+  it("carries an applied choice across delayed App discovery without persisting room snapshots", async () => {
+    const current = fixture();
+    current.context.phase = "idle";
+    current.activeGenerationRef.current = null;
+    const preference = { read: vi.fn(async () => original), save: vi.fn() };
+    current.context.AppQualityPreference = { connect: vi.fn(async () => preference) };
+    await current.change(lower);
+    await current.context.loadAppQualityPreference(new AbortController().signal);
+    expect(preference.save).toHaveBeenCalledExactlyOnceWith(lower);
+    expect(current.qualitySettingsRef.current).toEqual(lower);
+    current.context.commitQuality(original);
+    expect(preference.save).toHaveBeenCalledOnce();
+    await current.change(lower);
+    expect(preference.save).toHaveBeenCalledTimes(2);
+  });
+
+  it("remembers an explicit pre-share choice without changing room or capture state", async () => {
+    const current = fixture();
+    current.context.phase = "idle";
+    await current.change(lower);
+    expect(current.savePreferredQuality).toHaveBeenCalledWith(lower);
+    expect(current.applyCaptureProfile).not.toHaveBeenCalled();
+    expect(current.signalRef.current.setHostQualitySettings).not.toHaveBeenCalled();
+  });
+
+  it("does not replace a local preference with reauthenticated room settings", () => {
+    const current = fixture();
+    current.reauthenticate();
+    expect(current.savePreferredQuality).not.toHaveBeenCalled();
+  });
+
   it.each([true, false])("resumes the former raw audio input only after an accepted mixed-output resume: %s", (accepted) => {
     const current = fixture(false);
     const source = {} as MediaStream;
@@ -555,7 +820,8 @@ describe("Host quality ownership", () => {
     current.nativeModeRef.current = true;
     await current.openPicker();
     expect(current.nativeSourceRequestRef.current).not.toBeNull();
-    current.disposeResources.mockImplementation(() => current.disposeNative());
+    useRealResourceDisposal(current);
+    Object.assign(current.signalRef, { current: null });
     current.context.endSharing({ key: "host.notice.stopped" });
     expect(current.nativeSourceRequestRef.current).toBeNull();
     expect(current.nativeSourcePathRef.current).toBeNull();
@@ -853,6 +1119,24 @@ describe("Host quality ownership", () => {
     expect(current.openCaptureSourcePicker).toHaveBeenCalledTimes(2);
   });
 
+  it("refreshes a waiting picker after App approval without changing a live Browser share", async () => {
+    const current = fixture(false);
+    current.context.phase = "idle";
+    await current.openPicker();
+    expect(current.setNativeSources).toHaveBeenLastCalledWith({ kind: "browser" });
+    expect(current.client.sources).not.toHaveBeenCalled();
+
+    current.isClientActivated.mockReturnValue(true);
+    await current.openPicker();
+    expect(current.setNativeSources).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "ready" }));
+    expect(current.client.sources).toHaveBeenCalledOnce();
+
+    current.context.phase = "live";
+    await current.openPicker();
+    expect(current.setNativeSources).toHaveBeenLastCalledWith({ kind: "browser" });
+    expect(current.client.sources).toHaveBeenCalledOnce();
+  });
+
   it("shows App incompatibility in the picker and clears it on a successful refresh", async () => {
     const current = fixture();
     current.context.phase = "idle";
@@ -978,7 +1262,10 @@ describe("Host quality ownership", () => {
     current.NativeClient.connect.mockReturnValueOnce(discovery.promise);
     const opening = current.openPicker();
     await vi.waitFor(() => expect(current.NativeClient.connect).toHaveBeenCalledOnce());
+    const signal = current.NativeClient.connect.mock.calls[0]![0]!.signal;
+    expect(signal.aborted).toBe(false);
     current.closePicker();
+    expect(signal.aborted).toBe(true);
     discovery.resolve(current.client);
     await opening;
     expect(current.client.close).toHaveBeenCalledOnce();
@@ -1102,6 +1389,7 @@ describe("Host quality ownership", () => {
     expect(current.physical()).toEqual(lower);
     expect(current.qualitySettingsRef.current).toEqual(lower);
     expect(current.advancedQualityRef.current).toEqual(lower);
+    expect(current.savePreferredQuality).toHaveBeenCalledWith(lower);
     expect(current.peer.updateCaptureProfile).toHaveBeenCalledWith(lower);
     expect(optional.dispose).toHaveBeenCalledOnce();
     expect(current.client.stopReceive).toHaveBeenCalledWith("share");
@@ -1116,6 +1404,7 @@ describe("Host quality ownership", () => {
     current.applyCaptureProfile.mockRejectedValue(new Error("capture rejected"));
     await current.change(lower);
     expect(current.physical()).toEqual(original);
+    expect(current.savePreferredQuality).not.toHaveBeenCalled();
     expect(current.qualitySettingsRef.current).toEqual(original);
     expect(current.advancedQualityRef.current).toEqual(original);
     expect(optional.updateProfile).not.toHaveBeenCalled();
@@ -1160,6 +1449,7 @@ describe("Host quality ownership", () => {
     pending.resolve();
     await changing;
     expect(current.qualitySettingsRef.current).toEqual(original);
+    expect(current.savePreferredQuality).not.toHaveBeenCalled();
     expect(current.signalRef.current.setHostQualitySettings).not.toHaveBeenCalled();
   });
 

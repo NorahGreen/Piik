@@ -9,7 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/TNTcraftHIM/Piik/internal/media/encoded"
+	"github.com/TNTcraftHIM/Piik/internal/app/nativeaudio"
+	"github.com/TNTcraftHIM/Piik/internal/app/nativecapture"
+	"github.com/TNTcraftHIM/Piik/internal/media/forwarding"
 	"github.com/pion/rtcp"
 	"github.com/pion/sdp/v3"
 	"github.com/pion/webrtc/v4"
@@ -27,6 +29,8 @@ type ReceiverOptions struct {
 	EdgeCapacity int
 	Events       ReceiverEvents
 	Relay        *RelayOptions
+	// A consumed preparation transfers ownership even if offer validation fails.
+	PunchedSocket *PunchedSocket
 }
 
 // Receiver owns one inbound WebRTC connection and exposes its encoded media as
@@ -50,6 +54,13 @@ type Receiver struct {
 }
 
 func (engine *Engine) NewReceiver(options ReceiverOptions) (_ *Receiver, _ webrtc.SessionDescription, err error) {
+	if options.PunchedSocket != nil {
+		defer func() {
+			if err != nil {
+				_ = options.PunchedSocket.Close()
+			}
+		}()
+	}
 	if options.Offer.Type != webrtc.SDPTypeOffer || options.Offer.SDP == "" {
 		return nil, webrtc.SessionDescription{}, errors.New("native media receiver input is invalid")
 	}
@@ -58,7 +69,12 @@ func (engine *Engine) NewReceiver(options ReceiverOptions) (_ *Receiver, _ webrt
 		return nil, webrtc.SessionDescription{}, err
 	}
 	var prepareMapping func() int
-	socket, err := engine.newICESocket(options.ICEServers, true)
+	var socket *iceSocket
+	if options.PunchedSocket != nil {
+		socket, err = engine.adoptICESocket(options.PunchedSocket, options.ICEServers, true)
+	} else {
+		socket, err = engine.newICESocket(options.ICEServers, true)
+	}
 	if err != nil {
 		return nil, webrtc.SessionDescription{}, err
 	}
@@ -78,6 +94,10 @@ func (engine *Engine) NewReceiver(options ReceiverOptions) (_ *Receiver, _ webrt
 		_ = connection.Close()
 		return nil, webrtc.SessionDescription{}, err
 	}
+	if err = socket.addPunchedPeer(connection); err != nil {
+		_ = connection.Close()
+		return nil, webrtc.SessionDescription{}, err
+	}
 	videoCodec, err := selectReceiverVideoCodec(connection)
 	if err != nil {
 		_ = connection.Close()
@@ -91,19 +111,18 @@ func (engine *Engine) NewReceiver(options ReceiverOptions) (_ *Receiver, _ webrt
 		prepareMapping: prepareMapping,
 	}
 	layers := 1
+	var relay *RelayOptions
 	if _, supported := relayBackend(videoCodec, options.Relay); supported {
 		layers = 2
+		relay = options.Relay
 	}
-	receiver.source, err = engine.NewSource(videoCodec, options.EdgeCapacity, layers, func([]int) {
+	receiver.source, err = engine.newSource(videoCodec, options.EdgeCapacity, layers, relay, func([]int) {
 		// Local output slots all derive from this one upstream encoded stream.
 		receiver.RequestKeyFrame()
 	})
 	if err != nil {
 		_ = connection.Close()
 		return nil, webrtc.SessionDescription{}, err
-	}
-	if layers > 1 {
-		receiver.source.relay = &relayDerivation{source: receiver.source, options: *options.Relay}
 	}
 	if hasAudio {
 		receiver.audioSource, err = engine.NewRelayedAudioSource(options.EdgeCapacity)
@@ -249,7 +268,7 @@ func (receiver *Receiver) createAnswer() (webrtc.SessionDescription, error) {
 			if !strings.EqualFold(codec.MimeType, webrtc.MimeTypeOpus) {
 				continue
 			}
-			codec.SDPFmtpLine = opusSDPFmtpLine + ";stereo=1;maxaveragebitrate=192000"
+			codec.SDPFmtpLine = opusSDPFmtpLine + ";stereo=1;maxaveragebitrate=" + strconv.Itoa(nativeaudio.MaxBitrate)
 			if err := transceiver.SetCodecPreferences([]webrtc.RTPCodecParameters{codec}); err != nil {
 				return webrtc.SessionDescription{}, err
 			}
@@ -353,7 +372,7 @@ func (receiver *Receiver) consumeTrack(track *webrtc.TrackRemote, _ *webrtc.RTPR
 		receiver.videoSSRC = track.SSRC()
 		receiver.mu.Unlock()
 		for {
-			packet, _, err := track.ReadRTP()
+			packet, _, err := forwarding.ReadRTP(track)
 			if err != nil {
 				if !errors.Is(err, io.EOF) {
 					return
@@ -367,7 +386,7 @@ func (receiver *Receiver) consumeTrack(track *webrtc.TrackRemote, _ *webrtc.RTPR
 	if track.Kind() == webrtc.RTPCodecTypeAudio && receiver.audioSource != nil &&
 		strings.EqualFold(track.Codec().MimeType, webrtc.MimeTypeOpus) {
 		for {
-			packet, _, err := track.ReadRTP()
+			packet, _, err := forwarding.ReadRTP(track)
 			if err != nil {
 				return
 			}
@@ -436,7 +455,8 @@ func selectReceiverVideoCodec(connection *webrtc.PeerConnection) (string, error)
 		}
 		// Pion may fall back to a MIME-only match. Encoded fanout cannot advertise
 		// Constrained Baseline downstream after accepting a different profile.
-		for _, parameters := range transceiver.Receiver().GetParameters().Codecs {
+		negotiated := transceiver.Receiver().GetParameters().Codecs
+		for _, parameters := range negotiated {
 			name := strings.TrimPrefix(strings.ToLower(parameters.MimeType), "video/")
 			if _, supported := videoCodecs[name]; !supported {
 				continue
@@ -444,7 +464,7 @@ func selectReceiverVideoCodec(connection *webrtc.PeerConnection) (string, error)
 			if name == "h264" && !forwardableH264(parameters.SDPFmtpLine) {
 				continue
 			}
-			if err := transceiver.SetCodecPreferences([]webrtc.RTPCodecParameters{parameters}); err != nil {
+			if err := transceiver.SetCodecPreferences(forwarding.WithRTX(parameters, negotiated)); err != nil {
 				return "", err
 			}
 			return name, nil
@@ -465,15 +485,5 @@ func forwardableH264(fmtp string) bool {
 			packetization = strings.TrimSpace(value)
 		}
 	}
-	level, valid := encoded.H264ConstrainedBaselineLevel(profile)
-	if !valid || packetization != "1" {
-		return false
-	}
-	// Receiving may include smaller Browser encodes than native capture presets.
-	switch level {
-	case 10, 11, 12, 13, 20, 21, 22, 30, 31, 32, 40, 41, 42, 50, 51:
-		return true
-	default:
-		return false
-	}
+	return packetization == "1" && nativecapture.SupportedH264ProfileLevelID(profile)
 }

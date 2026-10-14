@@ -3,6 +3,7 @@ package nativecontrol
 import (
 	"github.com/TNTcraftHIM/Piik/internal/app/mediaedge"
 	"github.com/TNTcraftHIM/Piik/internal/app/nativecapture"
+	"github.com/TNTcraftHIM/Piik/internal/server/protocol"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -33,13 +34,7 @@ type sourcePreviewRequest struct {
 	Source  nativecapture.CaptureTarget `json:"source"`
 }
 
-type qualitySettings struct {
-	Resolution            string `json:"resolution"`
-	MaxFramerate          uint32 `json:"maxFramerate"`
-	MaxBitrate            uint32 `json:"maxBitrate"`
-	DegradationPreference string `json:"degradationPreference"`
-	ScreenAudioQuality    string `json:"screenAudioQuality,omitempty"`
-}
+type qualitySettings = protocol.QualitySettings
 
 type startShareRequest struct {
 	Version           int                          `json:"version"`
@@ -121,6 +116,7 @@ type prepareEdgeRequest struct {
 	ConnectionID       string      `json:"connectionId"`
 	SourceConnectionID string      `json:"sourceConnectionId,omitempty"`
 	ICEServers         []iceServer `json:"iceServers"`
+	Punched            bool        `json:"punched,omitempty"`
 }
 
 type prepareLocalEdgeRequest struct {
@@ -130,6 +126,7 @@ type prepareLocalEdgeRequest struct {
 	ShareID            string `json:"shareId"`
 	ConnectionID       string `json:"connectionId"`
 	SourceConnectionID string `json:"sourceConnectionId,omitempty"`
+	Restart            bool   `json:"restart"`
 }
 
 type receiveOfferRequest struct {
@@ -142,6 +139,7 @@ type receiveOfferRequest struct {
 	ICEServers    []iceServer `json:"iceServers"`
 	SDP           string      `json:"sdp"`
 	ReuseReceiver bool        `json:"reuseReceiver,omitempty"`
+	Punched       bool        `json:"punched,omitempty"`
 }
 
 type receiveCandidateRequest struct {
@@ -175,6 +173,7 @@ type edgeAnswerRequest struct {
 	ShareID      string `json:"shareId"`
 	ConnectionID string `json:"connectionId"`
 	SDP          string `json:"sdp"`
+	OfferID      string `json:"offerId,omitempty"`
 }
 
 type edgeCandidateRequest struct {

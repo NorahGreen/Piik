@@ -14,7 +14,6 @@ func TestRuntimeCapabilities(t *testing.T) {
 		want RuntimeCapabilities
 	}{
 		{`{}`, RuntimeCapabilities{}},
-		{`{"connectionAttemptProgress4":true}`, RuntimeCapabilities{ConnectionAttemptProgress4: true}},
 		{`{"sfu":true,"extra":{"enabled":true}}`, RuntimeCapabilities{Sfu: true}},
 		{`{"sfu":true,"sfuOnly":true}`, RuntimeCapabilities{Sfu: true, SfuOnly: true}},
 		{`{"natPrediction":true,"SFU":true}`, RuntimeCapabilities{NatPrediction: true}},
@@ -29,7 +28,6 @@ func TestRuntimeCapabilities(t *testing.T) {
 	for _, data := range []string{
 		`null`, `[]`, `true`, `{"sfu":null}`, `{"sfu":"true"}`, `{"sfuOnly":null}`, `{"sfuOnly":"true"}`,
 		`{"natPrediction":null}`, `{"natPrediction":1}`,
-		`{"connectionAttemptProgress4":null}`, `{"connectionAttemptProgress4":4}`,
 	} {
 		var got RuntimeCapabilities
 		if err := json.Unmarshal([]byte(data), &got); err == nil {
@@ -117,7 +115,7 @@ func drop(base []member, keys ...string) []member {
 const (
 	testAssignmentNone = `{"upstream":{"kind":"none"},"childPeerIds":[],` +
 		`"sfuPublicationGeneration":null}`
-	testQualitySettings = `{"resolution":"1080p","maxFramerate":60,"maxBitrate":8000000,` +
+	testQualitySettings = `{"resolution":{"width":1920,"height":1080},"maxFramerate":60,"maxBitrate":8000000,` +
 		`"degradationPreference":"maintain-resolution"}`
 	testRoutePolicy = `{"peerOnly":false,"topologyOptimization":true,"natPrediction":false}`
 	testIceConfig   = `{"iceServers":[],"natPredictionStunUrls":[]}`
@@ -126,7 +124,7 @@ const (
 func authenticatedHost() []member {
 	return []member{
 		{"type", `"authenticated"`},
-		{"protocol", `"piik-v23"`},
+		{"protocol", `"piik-v24"`},
 		{"peerId", `"host_12345678"`},
 		{"maxViewers", `8`},
 		{"endpointMediaCopyCapacity", `2`},
@@ -157,6 +155,32 @@ func assertServerMessage(t *testing.T, name string, data []byte, want bool) {
 			t.Fatalf("expected %s to be rejected", data)
 		}
 	})
+}
+
+func TestFutureReactionEventsKeepPayloadAndAuthorityBounds(t *testing.T) {
+	for _, role := range []string{"host", "viewer", "", "HOST", "admin"} {
+		assertServerMessage(t, "sender role "+role, []byte(
+			`{"type":"room-interaction","id":"event_future_1234","requestId":"request_future_1234","occurredAt":1,`+
+				`"sender":{"peerId":"sender_peer_1234","role":"`+role+`","displayName":"Friend"},"payload":{"kind":"reaction","reaction":"future-effect"}}`),
+			role == RoleHost || role == RoleViewer)
+	}
+	for _, payload := range []string{
+		`{"kind":"reaction","reaction":""}`,
+		`{"kind":"reaction","reaction":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+		`{"kind":"reaction","reaction":"future effect"}`,
+		`{"kind":"reaction","reaction":"👋"}`,
+		`{"kind":"reaction","reaction":"future-effect","targetPeerId":"bad"}`,
+		`{"kind":"reaction","reaction":"future-effect","text":"hidden command"}`,
+		`{"kind":"reaction","reaction":"tomato"}`,
+		`{"kind":"future-kind","reaction":"wave"}`,
+	} {
+		raw := `{"type":"room-interaction","id":"event_future_1234","requestId":"request_future_1234","occurredAt":1,` +
+			`"sender":{"peerId":"sender_peer_1234","role":"viewer","displayName":"Friend"},"payload":` + payload + `}`
+		assertServerMessage(t, payload, []byte(raw), false)
+	}
+	assertServerMessage(t, "future reaction with invalid sender", []byte(
+		`{"type":"room-interaction","id":"event_future_1234","requestId":"request_future_1234","occurredAt":1,`+
+			`"sender":{"peerId":"bad","role":"viewer","displayName":"Friend"},"payload":{"kind":"reaction","reaction":"future-effect"}}`), false)
 }
 
 func assertClientMessage(t *testing.T, name string, data []byte, want bool) {
@@ -223,9 +247,9 @@ func TestAuthenticatedRoomRevision(t *testing.T) {
 		object(drop(authenticatedHost(), "routeAssignment")), false)
 	assertServerMessage(t, "absent media mode",
 		object(drop(authenticatedHost(), "mediaMode")), false)
-	assertServerMessage(t, "quality settings past the bitrate ceiling",
+	assertServerMessage(t, "quality settings past the numeric representation",
 		object(with(authenticatedHost(), member{"qualitySettings",
-			`{"resolution":"1080p","maxFramerate":60,"maxBitrate":20000000,` +
+			`{"resolution":{"width":1920,"height":1080},"maxFramerate":60,"maxBitrate":4294967296,` +
 				`"degradationPreference":"maintain-resolution"}`})), false)
 }
 
@@ -479,7 +503,9 @@ func TestPreparedRouteCandidate(t *testing.T) {
 		{`{"current":1,"total":4}`, true},
 		{`{"current":4,"total":4}`, true},
 		{`{"current":5,"total":4}`, false},
-		{`{"current":1,"total":5}`, false},
+		{`{"current":1,"total":5}`, true},
+		{`{"current":1,"total":0}`, false},
+		{`{"current":1,"total":9007199254740992}`, false},
 		{`{"current":1.5,"total":3}`, false},
 	} {
 		assertServerMessage(t, "connectionAttempt "+sample.attempt,
@@ -558,7 +584,7 @@ func TestDuplicateKeysKeepTheLastOccurrence(t *testing.T) {
 	}
 	// A duplicated object is replaced, not merged.
 	if _, err := DecodeClientMessage(
-		[]byte(`{"type":"set-quality-settings","qualitySettings":{"resolution":"480p"},` +
+		[]byte(`{"type":"set-quality-settings","qualitySettings":{"resolution":{"width":854,"height":480}},` +
 			`"qualitySettings":` + testQualitySettings + `}`)); err != nil {
 		t.Fatalf("a duplicated object must be replaced wholesale: %v", err)
 	}
@@ -670,22 +696,9 @@ func TestOptionalAndNullableAreExact(t *testing.T) {
 }
 
 // A host authenticate without routePolicy takes DEFAULT_ROUTE_POLICY.
-func TestAuthenticateConnectionProgressOptIn(t *testing.T) {
-	for _, role := range []string{"host", "viewer"} {
-		base := `"type":"authenticate","protocol":"` + SignalingProtocol + `","roomId":"1234","clientId":"client_12345678","role":"` + role + `"`
-		if role == "host" {
-			base += `,"token":"` + repeat("a", 43) + `"`
-		}
-		for _, value := range []string{"true", "false", "null", "4", `"true"`} {
-			assertClientMessage(t, role+value, []byte(`{`+base+`,"connectionAttemptProgress4":`+value+`}`), value == "true")
-		}
-		assertClientMessage(t, role+" baseline", []byte(`{`+base+`}`), true)
-	}
-}
-
 func TestAuthenticateAppliesTheRoutePolicyDefault(t *testing.T) {
 	message, err := DecodeClientMessage([]byte(
-		`{"type":"authenticate","protocol":"piik-v23","roomId":"1234","role":"host",` +
+		`{"type":"authenticate","protocol":"piik-v24","roomId":"1234","role":"host",` +
 			`"token":"` + repeat("a", 43) + `","clientId":"client_12345678"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -701,7 +714,7 @@ func TestAuthenticateAppliesTheRoutePolicyDefault(t *testing.T) {
 
 func TestAuthenticateAcceptsPersistentRoomSessionOptIn(t *testing.T) {
 	message, err := DecodeClientMessage([]byte(
-		`{"type":"authenticate","protocol":"piik-v23","roomId":"1234","role":"host",` +
+		`{"type":"authenticate","protocol":"piik-v24","roomId":"1234","role":"host",` +
 			`"token":"` + repeat("a", 43) + `","clientId":"client_12345678","roomSession":true,"roomOnly":true}`))
 	if err != nil {
 		t.Fatal(err)
@@ -711,7 +724,7 @@ func TestAuthenticateAcceptsPersistentRoomSessionOptIn(t *testing.T) {
 		t.Fatalf("decoded %#v, want room-session opt-in and room-only state", message)
 	}
 	if _, err := DecodeClientMessage([]byte(
-		`{"type":"authenticate","protocol":"piik-v23","roomId":"1234","role":"host",` +
+		`{"type":"authenticate","protocol":"piik-v24","roomId":"1234","role":"host",` +
 			`"token":"` + repeat("a", 43) + `","clientId":"client_12345678","roomOnly":true}`)); err == nil {
 		t.Fatal("accepted roomOnly without roomSession opt-in")
 	}

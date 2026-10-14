@@ -8,8 +8,8 @@ import {
   configureScreenAudioSender,
   configureVideoSender,
   needsStartupVideoProfile,
-  QUALITY_RESOLUTIONS,
   screenAudioBitrate,
+  screenAudioSenderCeiling,
   senderParameterWarning,
   STARTUP_VIDEO_ENCODED_FRAMES,
   startupVideoProfile,
@@ -108,6 +108,16 @@ export class SfuPublisher {
           if (description.type !== "answer")
             throw new Error("SFU publisher expected an answer");
           await peer.waitForOperation(() => peer.pc.setRemoteDescription(description));
+          const audio = this.audioSender;
+          if (this.profile && audio?.track && screenAudioSenderCeiling(audio.getParameters(),
+            screenAudioBitrate(this.profile.maxAudioBitrate)) !== audio.getParameters().encodings[0]?.maxBitrate) {
+            void this.enqueue(async () => {
+              if (this.peer !== peer || !this.profile) return false;
+              const applied = await this.configure(this.profile, false);
+              if (!applied && this.peer === peer) this.fail("transport");
+              return applied;
+            }).catch(() => this.fail("transport"));
+          }
         },
         async (activeCount) => {
           await this.enqueue(async () => {
@@ -181,7 +191,7 @@ export class SfuPublisher {
           direction: "sendonly",
           streams: [stream],
           sendEncodings: [
-            { maxBitrate: screenAudioBitrate(profile.screenAudioQuality) },
+            { maxBitrate: screenAudioBitrate(profile.maxAudioBitrate) },
           ],
         });
         const opus = RTCRtpSender.getCapabilities("audio")?.codecs.filter(
@@ -425,12 +435,13 @@ export class SfuPublisher {
 
   private encodings(profile: QualityProfile): RTCRtpEncodingParameters[] {
     const settings = this.video ? senderCaptureTrack(this.video).getSettings() : undefined;
-    const ceiling = QUALITY_RESOLUTIONS[profile.resolution];
+    const ceiling = profile.resolution;
     const width = settings?.width ?? ceiling.width;
     const height = settings?.height ?? ceiling.height;
     const scale = Math.max(1, width / ceiling.width, height / ceiling.height);
     // LiveKit 2.22.1 publishUtils: screen share uses half size, same FPS,
-    // and quarter bitrate with a 150 kbps floor. WebRTC budgets the entire PC.
+    // and quarter bitrate with a 150 kbps floor, bounded by the source ceiling.
+    // WebRTC budgets the entire PC.
     const high = {
       rid: this.layerCount === 2 ? "h" : "q",
       active: this.activeCount >= this.layerCount,
@@ -444,7 +455,7 @@ export class SfuPublisher {
             rid: "q",
             active: this.activeCount > 0,
             scaleResolutionDownBy: 2 * scale,
-            maxBitrate: Math.max(150_000, Math.floor(profile.maxBitrate / 4)),
+            maxBitrate: Math.min(profile.maxBitrate, Math.max(150_000, Math.floor(profile.maxBitrate / 4))),
             maxFramerate: profile.maxFramerate,
           },
           high,
@@ -454,7 +465,7 @@ export class SfuPublisher {
 
   private media(profile: QualityProfile): SfuMedia {
     const settings = senderCaptureTrack(this.video!).getSettings();
-    const ceiling = QUALITY_RESOLUTIONS[profile.resolution];
+    const ceiling = profile.resolution;
     return {
       codec: this.codec,
       layers: this.encodings(profile).map((encoding) => ({
@@ -475,7 +486,7 @@ export class SfuPublisher {
         bitrate: encoding.maxBitrate!,
       })),
       audio: this.audio !== null,
-      audioBitrate: screenAudioBitrate(profile.screenAudioQuality),
+      audioBitrate: screenAudioBitrate(profile.maxAudioBitrate),
     };
   }
 
@@ -510,7 +521,7 @@ export class SfuPublisher {
     try {
       const audio = await peer.waitForOperation(() => configureScreenAudioSender(
         audioSender,
-        profile.screenAudioQuality,
+        screenAudioBitrate(profile.maxAudioBitrate),
       ));
       if (this.peer !== peer) return false;
       this.audioWarning = audioSenderParameterWarning(audio);

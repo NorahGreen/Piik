@@ -8,6 +8,7 @@ import { useCopy } from "../../ui/copy";
 import { LanguageControl } from "./LanguageControl";
 import { useTheme } from "../../ui/theme";
 import { Glyph } from "../../ui/icons";
+import { AppConnectionButton } from "./AppConnectionButton";
 
 export type LedState = "live" | "busy" | "warn" | "bad" | "off";
 
@@ -122,23 +123,30 @@ export function AppHeader({
   led,
   homeHref = "/",
   diagnosticControl,
+  showAppConnection = true,
+  atHome = false,
 }: {
   led?: React.ReactNode;
   homeHref?: string;
   diagnosticControl?: React.ReactNode;
+  showAppConnection?: boolean;
+  atHome?: boolean;
 }) {
   const { t } = useCopy();
   return (
     <header className="lr-top">
-      <a
+      {homeHref !== "/client" && <a
         className="lr-brand"
         href={withBrowserDebug(homeHref)}
         aria-label={t("brand.home")}
+        aria-current={atHome ? "page" : undefined}
       >
+        {!atHome && <Glyph name="chevron" size={14} className="lr-home-arrow" />}
         <BrandMark size={34} motion="once" />
-      </a>
+      </a>}
       <span className="lr-top-right">
         {led}
+        {homeHref !== "/client" && showAppConnection && <AppConnectionButton />}
         <HeaderControls diagnosticControl={diagnosticControl} />
       </span>
     </header>
