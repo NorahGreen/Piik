@@ -397,16 +397,28 @@ use the public provisional allocation primitives, with exact typed child state
 read by its parent; do not parse DebugInfo or run a second multi-track allocator.
 The candidate uses LiveKit SendSideBWE and Prober through their public APIs,
 with the [scoped measurement repair](../../internal/thirdparty/README.md#livekit-send-side-bandwidth-estimation).
-Packet sending uses the pinned [LiveKit transport's send-side BWE default](https://github.com/livekit/livekit/blob/v1.13.6/pkg/rtc/transport.go),
-`NoQueue`: an asynchronous writer without a second bitrate throttle on already
-encoded packets. Admission stays capped by the existing packet cache bound;
-canceled probe tickets remain charged until actually dequeued. Congestion
-estimation, probes and codec/allocation budgets retain their existing owners.
+Packet timing uses the existing LiveKit SDK leaky-bucket pacer; the SFU writer
+retains RTP extensions, TWCC identity, probe accounting and packet-pool ownership.
+Native encoders emit whole access units, whereas the SFU's `NoQueue` path assumes
+input already paced by its publisher. Admission stays capped by the existing
+packet cache bound; canceled probe tickets remain charged until actually
+dequeued. Congestion estimation, probes and codec/allocation budgets retain their
+existing owners.
 Adapted probe lifecycle code retains Apache-2.0 attribution. Probe
 promotion requires the upstream validity criterion and non-congestion signal;
 an empty or inconclusive attempt cannot promote the estimator's initial ceiling.
 
 #### Send Queue Recovery
+
+Delayed loss repair needs negotiated RTX on both single-child forwarding and
+Native SFU publication. Reusing the primary sequence space causes sufficiently
+late retransmissions to fail SRTP replay checks. A real Pion simulcast control
+drops a packet, delivers 96 newer packets, then requests repair; it fails without
+RTX and passes with the shared codec registration. Simulcast repair also carries
+the matching MID and [repaired stream identifier](https://www.rfc-editor.org/rfc/rfc8852.html#section-3)
+on its repair SSRC. Removing those headers independently fails the same control.
+Pion and LiveKit continue to own replay protection and retransmission; no replay
+window relaxation or second repair loop is needed.
 
 A bounded writer-stall control exposes a limitation in the former SFU queue:
 after the estimate falls from 500 to 8 kbps, only three of 32 already-encoded
@@ -414,13 +426,39 @@ packets drain in two seconds. The upstream unthrottled writer drains the same
 input once the writer resumes. A separate real Windows VP8 codec and
 Native forwarding control reproduces stale decoded pictures after roughly one
 second of ordinary UDP loss; the packet-count cap alone does not prevent this.
+The retained SDK queue also passes that stalled-writer control: its 200 ms
+drain target increases pacing when an old low estimate would trap queued frames.
+That target is not a hard latency bound.
 The [ordinary media controls](./nat-traversal.md#recovery-ownership-and-forwarding)
 retain the decoded-picture and address-change evidence boundary.
 
+The complementary healthy-network control emits 5 Mbps as 30 whole frames per
+second over a 12 Mbps link with a shallow 7.5 KB queue. `NoQueue` repeatedly loses
+parts of those bursts and reduces allocation despite sufficient average capacity;
+the paced control retains its high output and 5 Mbps committed budget. A 5 ms
+service interval still batches too much for this fixture; 3 ms passes with
+Pion's existing 1.5 pacing headroom. This follows the
+[WebRTC distinction between average frame rate and packet bursts](https://webrtc.googlesource.com/src/+/refs/heads/main/modules/pacing/g3doc/index.md).
+Both queue controls must pass; correcting old-packet delay alone does not
+establish healthy Native sending.
+
+Allocation also distinguishes source measurements from changed capacity. A
+stable 1 Mbps connection must not drop its output merely because that source's
+measurement changes from 900 kbps to 1.05 Mbps, or because a lower output's
+measurement window becomes available first. The adapter now follows LiveKit's
+stable optimal/cooperative allocation paths; an actual lower committed capacity
+still constrains the allocation. The focused control checks both retention and
+real downgrades, while the frame-burst trace requires uninterrupted high output
+after startup. Native categorical quality reads those allocation restrictions
+and ordinary congestion, not the ratio of instantaneous traffic to capacity.
+
 Congestion callbacks could also promote the estimator's unmeasured 100 Mbps
-initial capacity while a probe was pending. Congestion now only reduces the
-committed budget; a valid completed non-congesting probe owns increases.
-Publication allocation and encoder input use that same committed video capacity.
+initial capacity while a probe was pending. Outside a recovery probe, congestion
+can reduce the committed budget; a valid completed non-congesting probe owns
+increases. Congestion during sending or settling ends exploration without cutting
+the established media budget. Both single-child transport and the publication's
+encoder-facing budget retain this rule; the upstream publication allocator's
+guard alone does not protect a separate encoder consumer.
 This follows the
 [upstream distinction between congestion events and completed probes](https://github.com/livekit/livekit/blob/v1.13.6/pkg/sfu/streamallocator/streamallocator.go),
 without introducing another estimator.
@@ -454,20 +492,51 @@ The explicit `TestTransportConstrainedDormantRecovery` virtual-network trace use
 real Pion RTP/TWCC through 6 Mbps -> 500 kbps -> 6 Mbps shaping. The repaired
 library restores sustained 1.20 Mbps video after release, with a budget assertion
 that rejects the unmeasured initial capacity. Earlier passing recovery traces
-could promote 100 Mbps and do not establish correct budgeting. The SDK
-latency-aware queue requires an extra adapter and is not retained. Earlier
+could promote 100 Mbps and do not establish correct budgeting. Earlier
 flaky comparisons also registered TWCC twice on the receiver, duplicating
 feedback; those results do not rank the queues. Product receivers already use
 the single default interceptor owner.
+
+Partial recovery exposed a second adapter omission: a rate-controlled local
+output can remain below its own ceiling without needing another spatial layer.
+Probe demand now includes that unmet current-output demand, including when no
+higher output exists. Raw forwarding cannot change its encoder and keeps the
+existing layer-selection rule. In a matched retained-connection control,
+6 Mbps -> 120 kbps -> 800 kbps -> 6 Mbps, the former adapter stays near 74 kbps
+through the partial restoration; the corrected adapter restores its 300 kbps
+output before the 1.2 Mbps output fits. Both eventually restore the higher output.
+The retained network gate checks the intermediate phase as well as final recovery.
+A separate two-child control uses real Windows VP8 encoding and Browser decoding:
+the constrained child recovers after release while the healthy child retains its
+original dimensions. These checks do not establish the cause of an unmatched
+physical Host's low-resolution session.
+
+One publication boundary remains reproducible: with two declared encodings but
+only the rate-controlled lowest requested, the original 6 Mbps -> 120 kbps ->
+6 Mbps control settled at about 215--230 kbps of a 300 kbps output. After RTX
+negotiation was repaired, four repeats on 2026-10-15 settled at 239--273 kbps;
+two still failed the fixture's sustained 250 kbps recovery observation without
+further probing. Repair improves delivery but does not establish consistent
+within-output recovery. The full SFU allocator probes spatial deficiency, so it
+stops exploring once that single active RID fits its
+reduced encoding. Diagnostics now retain this within-output limitation, but
+that does not repair its probe demand. A matched isolated library extension
+adds the local encoder's unmet demand to that allocator's state and existing
+padding probe, restoring about 295 kbps. No additional estimator, probe loop or
+fabricated layer bitrate is needed. The pinned and inspected upstream allocator
+have no such input; this experiment is not retained in product code and does
+not justify copying the complete allocator into Piik. Integration must preserve
+that single probe owner. This separate publication control does not diagnose a
+direct P2P field session.
 
 Live audio changes exposed a related scope mismatch: Piik's TWCC tracks only
 video, but the adapter deducted audio from that measured capacity and included
 audio in expected probe usage. After restoring 320 kbps Opus, this could remove
 an already recovered video layer on a healthy 6 Mbps link. The adapter now uses
 the measured video capacity directly, matching the upstream allocator's
-video-only usage accounting. Native and SFU share this rule; quality reports
-compare video capacity with video payload while retaining total traffic in
-diagnostics. Opus rate and transport behavior are unchanged. The retained
+video-only usage accounting. Native and SFU share this rule; diagnostics retain
+video capacity and total traffic as separate facts. Opus rate and transport
+behavior are unchanged. The retained
 network gate exercises video-only and real Opus 320/96/320 kbps cases, requiring
 sustained high video and decoded audio after recovery. The former subtraction
 fails a matched trace but can be masked by later probe traffic; a passing

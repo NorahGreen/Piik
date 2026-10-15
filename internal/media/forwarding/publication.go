@@ -28,6 +28,7 @@ import (
 )
 
 const publicationRIDExtension = "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id"
+const publicationRepairRIDExtension = "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id"
 
 // Publication sends existing representations over one simulcast connection.
 // LiveKit's allocator owns all track allocations and probes on the shared BWE.
@@ -66,9 +67,10 @@ func NewPublication(options TransportOptions) (_ *Publication, err error) {
 		Config: sendsidebwe.DefaultSendSideBWEConfig, Logger: log,
 	})}
 	publication.bandwidth.target.Store(int64(options.InitialBitrate))
-	publication.pacer = &publicationPacer{headers: make(map[uint32]publicationHeaders), boundedPacer: newBoundedPacer(
-		pacer.NewNoQueue(log, nil), log, options.Source.maxPackets,
+	publication.pacer = &publicationPacer{headers: make(map[uint32]publicationHeaders), boundedPacer: newPacedQueue(
+		log, options.Source.maxPackets, options.InitialBitrate,
 	)}
+	publication.bandwidth.pacer = publication.pacer.boundedPacer
 	publication.pacer.sender = pacer.NewBase(log, publication.bandwidth)
 	publication.allocator = streamallocator.NewStreamAllocator(streamallocator.StreamAllocatorParams{
 		Config: streamallocator.DefaultStreamAllocatorConfig, BWE: publication.bandwidth,
@@ -77,12 +79,12 @@ func NewPublication(options TransportOptions) (_ *Publication, err error) {
 	publication.allocator.Start()
 	media := &webrtc.MediaEngine{}
 	codec := options.Source.Codec()
-	if err = media.RegisterCodec(codec, webrtc.RTPCodecTypeVideo); err != nil {
+	if err = registerVideoCodec(media, codec); err != nil {
 		return nil, err
 	}
 	for _, uri := range []string{
 		"http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01",
-		"urn:ietf:params:rtp-hdrext:sdes:mid", publicationRIDExtension,
+		"urn:ietf:params:rtp-hdrext:sdes:mid", publicationRIDExtension, publicationRepairRIDExtension,
 	} {
 		if err = media.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{URI: uri}, webrtc.RTPCodecTypeVideo); err != nil {
 			return nil, err
@@ -315,7 +317,11 @@ func (publication *Publication) Counters() PublicationCounters {
 	defer publication.mu.Unlock()
 	stats := PublicationCounters{Frames: make([]uint64, len(publication.counters)),
 		AudioBytes: publication.audioBytes.Load(), TargetBitrate: publication.bandwidth.target.Load(),
-		Observed: publication.bandwidth.observed.Load(), Limited: publication.bandwidth.CongestionState() == bwe.CongestionStateCongested}
+		Observed: publication.bandwidth.observed.Load(), Limited: !publication.bandwidth.probing.Load() &&
+			publication.bandwidth.CongestionState() == bwe.CongestionStateCongested}
+	if publication.activeCount > 0 && controlledLayerCeiling(publication.source, 0) > publication.LowestLayerBudget() {
+		stats.Limited = true
+	}
 	for index := range publication.counters {
 		stats.Frames[index] = publication.counters[index].frames.Load()
 		stats.VideoBytes += publication.counters[index].bytes.Load()
@@ -487,10 +493,13 @@ type publicationTrack struct {
 func (track *publicationTrack) ID() string  { return string(track.id) }
 func (track *publicationTrack) RID() string { return track.rid }
 func (track *publicationTrack) Bind(context webrtc.TrackLocalContext) (webrtc.RTPCodecParameters, error) {
-	var extension, midExtension uint8
+	var extension, repairExtension, midExtension uint8
 	for _, header := range context.HeaderExtensions() {
 		if header.URI == publicationRIDExtension {
 			extension = uint8(header.ID)
+		}
+		if header.URI == publicationRepairRIDExtension {
+			repairExtension = uint8(header.ID)
 		}
 		if header.URI == "urn:ietf:params:rtp-hdrext:sdes:mid" {
 			midExtension = uint8(header.ID)
@@ -502,6 +511,10 @@ func (track *publicationTrack) Bind(context webrtc.TrackLocalContext) (webrtc.RT
 	track.pacer.headersMu.Lock()
 	track.pacer.headers[uint32(context.SSRC())] = publicationHeaders{rid: track.rid, extension: extension,
 		mid: track.transceiver.Mid(), midExtension: midExtension, counters: track.counters}
+	if ssrc := context.SSRCRetransmission(); ssrc != 0 {
+		track.pacer.headers[uint32(ssrc)] = publicationHeaders{rid: track.rid, extension: repairExtension,
+			mid: track.transceiver.Mid(), midExtension: midExtension, counters: track.counters}
+	}
 	track.pacer.headersMu.Unlock()
 	return track.DownTrack.Bind(context)
 }
@@ -557,9 +570,11 @@ func (context publicationAudioContext) WriteStream() webrtc.TrackLocalWriter { r
 // in this estimate; subtracting it here would understate the video budget.
 type publicationBWE struct {
 	*sendsidebwe.SendSideBWE
+	pacer    *boundedPacer
 	listener bwe.BWEListener
 	target   atomic.Int64
 	observed atomic.Bool
+	probing  atomic.Bool
 }
 
 func (bandwidth *publicationBWE) HandleTWCCFeedback(report *rtcp.TransportLayerCC) {
@@ -571,11 +586,26 @@ func (bandwidth *publicationBWE) SetBWEListener(listener bwe.BWEListener) {
 	bandwidth.listener = listener
 	bandwidth.SendSideBWE.SetBWEListener(bandwidth)
 }
+
+func (bandwidth *publicationBWE) ProbeClusterStarting(info ccutils.ProbeClusterInfo) {
+	bandwidth.probing.Store(true)
+	bandwidth.SendSideBWE.ProbeClusterStarting(info)
+}
+
+func (bandwidth *publicationBWE) Reset() {
+	bandwidth.SendSideBWE.Reset()
+	bandwidth.probing.Store(false)
+}
+
 func (bandwidth *publicationBWE) OnCongestionStateChange(from, to bwe.CongestionState, capacity int64) {
 	// As for an individual Transport, only a completed non-congesting probe
-	// can raise committed capacity. All consumers use that same accepted value.
-	if to == bwe.CongestionStateCongested && capacity > 0 && capacity < bandwidth.target.Load() {
+	// can raise capacity. The allocator ignores congestion during a probe; the
+	// encoder-facing budget must retain that same value through settling.
+	if !bandwidth.probing.Load() && to == bwe.CongestionStateCongested && capacity > 0 && capacity < bandwidth.target.Load() {
 		bandwidth.target.Store(capacity)
+		if bandwidth.pacer != nil {
+			bandwidth.pacer.SetBitrate(int(capacity))
+		}
 	}
 	bandwidth.listener.OnCongestionStateChange(from, to, bandwidth.target.Load())
 }
@@ -583,6 +613,12 @@ func (bandwidth *publicationBWE) ProbeClusterFinalize() (ccutils.ProbeSignal, in
 	signal, capacity, done := bandwidth.SendSideBWE.ProbeClusterFinalize()
 	if done && signal == ccutils.ProbeSignalNotCongesting && capacity > bandwidth.target.Load() {
 		bandwidth.target.Store(capacity)
+		if bandwidth.pacer != nil {
+			bandwidth.pacer.SetBitrate(int(capacity))
+		}
+	}
+	if done {
+		bandwidth.probing.Store(false)
 	}
 	return signal, bandwidth.target.Load(), done
 }
@@ -597,7 +633,7 @@ func (queue *publicationPacer) Enqueue(packet *pacer.Packet) {
 	queue.headersMu.Lock()
 	headers := queue.headers[packet.Header.SSRC]
 	queue.headersMu.Unlock()
-	if headers.extension != 0 {
+	if headers.extension != 0 && headers.rid != "" {
 		_ = packet.Header.SetExtension(headers.extension, []byte(headers.rid))
 	}
 	if headers.midExtension != 0 {

@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { CaptureSourcePicker } from "../src/client/components/living/CaptureSourcePicker";
 import { AudioExclusionSelect } from "../src/client/components/living/AudioExclusionSelect";
+import { CameraSources } from "../src/client/components/living/CameraSources";
 import { setCopy, t } from "../src/client/ui/copy";
 
 import {
@@ -32,21 +33,35 @@ describe("native capture source selection", () => {
   const game = target("My Game", "1");
   afterEach(() => setCopy({ lang: "en", vis: true }));
 
+  it("keeps enumerated cameras selectable while optional thumbnails load", () => {
+    const props = {
+      sources: [{ id: "front", label: "Front camera", preview: null }],
+      busy: true, error: null, selected: "", onSelect: () => {},
+    };
+    const html = renderToStaticMarkup(createElement(CameraSources, { ...props, disabled: false }));
+    expect(html).toContain('data-camera-source="front"');
+    expect(html).not.toContain('disabled=""');
+    expect(renderToStaticMarkup(createElement(CameraSources, { ...props, disabled: true })))
+      .toContain('disabled=""');
+  });
+
   it.each(["en", "zh", "vis"] as const)("keeps Browser capture reachable with an actionable App mismatch in %s", (mode) => {
     const lang = mode === "zh" ? "zh" : "en";
     setCopy({ lang, vis: mode === "vis" });
-    const html = renderToStaticMarkup(createElement(CaptureSourcePicker, {
+    const props = {
       nativeSources: { kind: "incompatible" },
-      initialTab: "browser",
       onBrowser: () => {}, onNative: () => {}, onPreview: async () => null,
       onRefresh: () => {}, onCancel: () => {},
-    }));
-    expect(html).toContain(t(lang, "native.incompatible"));
+    } as const;
+    const html = renderToStaticMarkup(createElement(CaptureSourcePicker, { ...props, initialTab: "browser" }));
+    expect(html).not.toContain(t(lang, "native.incompatible"));
     expect(html).toContain(`aria-label="${t(lang, "host.sourcePicker.browser")}"`);
     expect(html).not.toMatch(/data-source-tab="browser"[^>]*disabled=""/);
     expect(html).not.toContain(t(lang, "host.sourcePicker.empty"));
-    expect(html).toContain('role="status"');
-    expect(html).toContain('tabindex="0"');
+    expect(html).not.toContain('role="status"');
+    const nativeTab = renderToStaticMarkup(createElement(CaptureSourcePicker, { ...props, initialTab: "window" }));
+    expect(nativeTab).toContain(t(lang, "native.incompatible"));
+    expect(nativeTab).toContain('role="status"');
   });
 
   it("uses the complete window identity as the UI key", () => {
@@ -89,14 +104,14 @@ describe("native capture source selection", () => {
         expect(nativeTab).not.toContain('data-source-tab="display"');
         expect(nativeTab).toMatch(/data-source-tab="browser"[^>]*aria-selected="true"/);
       }
-      expect(nativeTab.replaceAll("&#x27;", "'")).toContain(t(lang, `host.sourcePicker.${kind}`));
+      if (kind === "unavailable") expect(nativeTab).not.toContain('role="status"');
+      else expect(nativeTab.replaceAll("&#x27;", "'")).toContain(t(lang, `host.sourcePicker.${kind}`));
       expect(nativeTab).not.toContain(t(lang, "host.sourcePicker.empty"));
       expect(nativeTab).not.toMatch(/class="lr-source-picker-refresh"[^>]*disabled=""/);
       const browserTab = renderToStaticMarkup(createElement(CaptureSourcePicker, { ...props, initialTab: "browser" }));
       expect(browserTab).toContain(`aria-label="${t(lang, "host.sourcePicker.browser")}"`);
       const browserCopy = browserTab.replaceAll("&#x27;", "'");
-      if (kind === "unavailable") expect(browserCopy).toContain(t(lang, "host.sourcePicker.unavailable"));
-      else expect(browserCopy).not.toContain(t(lang, `host.sourcePicker.${kind}`));
+      expect(browserCopy).not.toContain('role="status"');
       expect(browserTab).not.toMatch(/class="lr-source-option is-browser"[^>]*disabled=""/);
     }
   });
@@ -150,7 +165,7 @@ describe("native capture source selection", () => {
       .toEqual(["browser", "camera"]);
     expect(html).toMatch(/data-source-tab="browser"[^>]*aria-selected="true"/);
     expect(html).not.toMatch(/data-source-tab="camera"[^>]*disabled=""/);
-    expect(html).not.toContain(t("en", "host.sourcePicker.unavailable"));
+    expect(html).not.toContain('role="status"');
   });
 
   it("selects a focusable Camera tab when Browser sharing is unavailable", () => {

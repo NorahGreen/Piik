@@ -31,13 +31,28 @@ func TestTransportConstrainedDormantRecovery(t *testing.T) {
 	if os.Getenv("PIIK_TRANSPORT_RECOVERY") == "" {
 		t.Skip("set PIIK_TRANSPORT_RECOVERY=1 for the bounded virtual-network gate")
 	}
-	t.Run("video-only", func(t *testing.T) { checkTransportRecovery(t, false) })
-	t.Run("numeric-audio", func(t *testing.T) { checkTransportRecovery(t, true) })
+	for _, scenario := range []string{"video-only", "numeric-audio", "within-lowest-output", "encoded-frame-bursts"} {
+		t.Run(scenario, func(t *testing.T) { checkTransportRecovery(t, scenario) })
+	}
 }
 
-func checkTransportRecovery(t *testing.T, withAudio bool) {
+func checkTransportRecovery(t *testing.T, scenario string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 32*time.Second)
+	withAudio, recoverLowest := scenario == "numeric-audio", scenario == "within-lowest-output"
+	bursts := scenario == "encoded-frame-bursts"
+	duration, recoveredAt := 26*time.Second, 20*time.Second
+	lowBitrate, highBitrate, linkCeiling, recoveredBitrate := 300_000, 1_200_000, 6_000_000, 800_000
+	if recoverLowest {
+		duration, recoveredAt = 50*time.Second, 44*time.Second
+	}
+	if bursts {
+		// Average capacity comfortably fits the video, but a whole 5 Mbps/30 fps
+		// frame exceeds this link's queue. A healthy-link control catches missing
+		// pacing independently from congestion recovery.
+		duration, recoveredAt = 12*time.Second, 4*time.Second
+		lowBitrate, highBitrate, linkCeiling, recoveredBitrate = 1_200_000, 5_000_000, 12_000_000, 4_500_000
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), duration+6*time.Second)
 	defer cancel()
 	check := func(err error) {
 		t.Helper()
@@ -52,7 +67,7 @@ func checkTransportRecovery(t *testing.T, withAudio bool) {
 	check(err)
 	receiveNet, err := vnet.NewNet(&vnet.NetConfig{StaticIPs: []string{"10.0.0.2"}})
 	check(err)
-	link := vnet.NewTBFQueue(6_000_000, 2400, 7500)
+	link := vnet.NewTBFQueue(linkCeiling, 2400, 7500)
 	queue, err := vnet.NewQueue(receiveNet, link)
 	check(err)
 	defer queue.Close()
@@ -65,9 +80,12 @@ func checkTransportRecovery(t *testing.T, withAudio bool) {
 		RTCPFeedback: []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}, {Type: webrtc.TypeRTCPFBTransportCC}},
 	}, PayloadType: 96}
 	source, err := NewEncodedSource(SourceOptions{ID: "recovery", StreamID: "recovery", Codec: codec,
-		Formats: []LayerFormat{{Width: 8, Height: 8, Bitrate: 300_000}, {Width: 16, Height: 16, Bitrate: 1_200_000}}, MaxPackets: 500})
+		Formats: []LayerFormat{{Width: 8, Height: 8, Bitrate: uint32(lowBitrate)}, {Width: 16, Height: 16, Bitrate: uint32(highBitrate)}}, MaxPackets: 500})
 	check(err)
 	defer source.Close()
+	// The generated lowest output follows the supplied codec budget, as Native
+	// capture does. Raw SFU forwarding cannot change an upstream encoder's rate.
+	source.SetLowestLayerRateControlled(true)
 	sendSettings := webrtc.SettingEngine{}
 	sendSettings.SetNet(sendNet)
 	sendSettings.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
@@ -101,7 +119,7 @@ func checkTransportRecovery(t *testing.T, withAudio bool) {
 		audioTrack = audio
 	}
 	transport, err := NewTransport(TransportOptions{Source: source.Source, Settings: sendSettings,
-		ConnectionID: "recovery-child", InitialBitrate: 1_200_000, Audio: audioTrack})
+		ConnectionID: "recovery-child", InitialBitrate: highBitrate, Audio: audioTrack})
 	check(err)
 	defer transport.Close()
 	receiveSettings := webrtc.SettingEngine{}
@@ -190,8 +208,8 @@ func checkTransportRecovery(t *testing.T, withAudio bool) {
 	start, lastReport := time.Now(), time.Now()
 	var previousReceived, previousAudio uint64
 	var dormant bool
-	var recoveredWindows, audioWindows int
-	minimum := int64(1_200_000)
+	var recoveredWindows, audioWindows, lowestWindows int
+	minimum := int64(highBitrate)
 	frame := 0
 	for {
 		select {
@@ -213,16 +231,22 @@ func checkTransportRecovery(t *testing.T, withAudio bool) {
 		}
 		now := time.Now()
 		elapsed := now.Sub(start)
-		if elapsed >= 26*time.Second {
+		if elapsed >= duration {
 			break
 		}
-		capacity := 6_000_000
-		if elapsed >= 4*time.Second && elapsed < 12*time.Second {
+		capacity := linkCeiling
+		if !bursts && elapsed >= 4*time.Second && elapsed < 12*time.Second {
 			capacity = 500_000
+			if recoverLowest {
+				capacity = 120_000
+			}
+		}
+		if recoverLowest && elapsed >= 12*time.Second && elapsed < 28*time.Second {
+			capacity = 800_000
 		}
 		link.SetRate(capacity)
 		state := transport.Output.State()
-		if state.VideoBudget > 6_000_000 {
+		if state.VideoBudget > int64(linkCeiling) {
 			t.Fatalf("probe promoted capacity beyond this fixture's link: %+v", state)
 		}
 		_, observed := transport.TargetBitrate()
@@ -234,11 +258,11 @@ func checkTransportRecovery(t *testing.T, withAudio bool) {
 		pts := time.Duration(frame) * period
 		check(source.BeginFrame(pts, now))
 		transport.Output.BeginFrame()
-		for layer, bitrate := range []int64{min(300_000, max(state.VideoBudget, 1)), 1_200_000} {
+		for layer, bitrate := range []int64{min(int64(lowBitrate), max(state.VideoBudget, 1)), int64(highBitrate)} {
 			if layer == 1 && !high {
 				continue
 			}
-			data := make([]byte, max(len(sfu.VP8KeyFrame8x8), int(bitrate/8/30)))
+			data := make([]byte, max(len(sfu.VP8KeyFrame8x8), int(source.CodecBudget(layer, bitrate)/8/30)))
 			copy(data, sfu.VP8KeyFrame8x8)
 			check(source.WriteFrame(layer, encoded.Frame{Data: data, PTS: pts, Duration: period}))
 		}
@@ -251,13 +275,22 @@ func checkTransportRecovery(t *testing.T, withAudio bool) {
 				elapsed.Seconds(), capacity, state.VideoBudget, state.Target, state.Current, high, receivedBps,
 				transport.estimator.CongestionState(), transport.paddingReady, transport.probe.Id, transport.Egress())
 			transport.mu.Unlock()
-			if elapsed >= 20*time.Second && state.Current == 1 && receivedBps > 800_000 {
+			if bursts && elapsed >= 2*time.Second && (state.Target != 1 || state.Current != 1) {
+				t.Fatalf("healthy capacity downgraded during source measurement: %+v", state)
+			}
+			if elapsed >= recoveredAt && state.Current == 1 && receivedBps > float64(recoveredBitrate) {
 				recoveredWindows++
+			}
+			// Partial recovery must restore the current output before the larger
+			// spatial output fits; only checking the final fast link misses this.
+			if recoverLowest && capacity == 800_000 && state.Current == 0 &&
+				state.VideoBudget >= 300_000 && state.VideoBudget < 1_200_000 && receivedBps > 250_000 {
+				lowestWindows++
 			}
 			decoded := audioDecoded.Load()
 			if withAudio {
 				t.Logf("audio decoded=%d errors=%d bitrate=%d", decoded-previousAudio, audioErrors.Load(), encoder.Bitrate())
-				if elapsed >= 20*time.Second && decoded-previousAudio >= 35 {
+				if elapsed >= recoveredAt && decoded-previousAudio >= 35 {
 					audioWindows++
 				}
 			}
@@ -265,7 +298,10 @@ func checkTransportRecovery(t *testing.T, withAudio bool) {
 			lastReport, previousReceived = now, bytes
 		}
 	}
-	if !dormant || minimum >= 1_200_000 || recoveredWindows < 5 || withAudio && (audioWindows < 5 || audioErrors.Load() != 0) {
+	if recoverLowest && lowestWindows < 5 {
+		t.Fatalf("current output remained degraded after partial recovery: windows=%d minimum=%d", lowestWindows, minimum)
+	}
+	if !bursts && (!dormant || minimum >= int64(highBitrate)) || recoveredWindows < 5 || withAudio && (audioWindows < 5 || audioErrors.Load() != 0) {
 		t.Fatalf("missing constrained/dormant/released recovery: dormant=%v minimum=%d videoWindows=%d audioWindows=%d audioErrors=%d state=%+v",
 			dormant, minimum, recoveredWindows, audioWindows, audioErrors.Load(), transport.Output.State())
 	}

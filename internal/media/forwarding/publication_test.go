@@ -13,7 +13,7 @@ import (
 	"github.com/livekit/livekit-server/pkg/sfu"
 	"github.com/livekit/livekit-server/pkg/sfu/bwe"
 	"github.com/livekit/livekit-server/pkg/sfu/ccutils"
-	"github.com/livekit/livekit-server/pkg/sfu/pacer"
+	packetpacer "github.com/livekit/mediatransportutil/pkg/pacer"
 	"github.com/livekit/protocol/logger"
 	"github.com/pion/interceptor"
 	"github.com/pion/interceptor/pkg/twcc"
@@ -31,7 +31,7 @@ func TestPublicationEmptyProbeCannotIncreaseCapacity(t *testing.T) {
 	})}
 	bandwidth.target.Store(target)
 	queue := &publicationPacer{boundedPacer: newBoundedPacer(
-		pacer.NewNoQueue(log, nil), log, 500,
+		packetpacer.NewNoQueue(log), log, 500,
 	)}
 	defer queue.Stop()
 	info := ccutils.ProbeClusterInfo{Id: 1, CreatedAt: time.Now(), Goal: ccutils.ProbeClusterGoal{
@@ -125,6 +125,10 @@ func checkPublicationProbeCapacity(t *testing.T, received bool) {
 			} else if signal != ccutils.ProbeSignalInconclusive || capacity != target {
 				t.Fatalf("unacknowledged probe changed capacity: signal=%v committed=%d", signal, capacity)
 			}
+			bandwidth.OnCongestionStateChange(bwe.CongestionStateNone, bwe.CongestionStateCongested, target/2)
+			if bandwidth.target.Load() != target/2 {
+				t.Fatal("finalized probe suppressed ordinary media congestion")
+			}
 			return
 		}
 		if time.Now().After(deadline) {
@@ -142,7 +146,9 @@ func (recorder *publicationCapacityRecorder) OnCongestionStateChange(_, _ bwe.Co
 
 func TestPublicationCongestionUsesCommittedCapacity(t *testing.T) {
 	recorder := &publicationCapacityRecorder{}
-	bandwidth := &publicationBWE{listener: recorder}
+	bandwidth := &publicationBWE{listener: recorder, SendSideBWE: sendsidebwe.NewSendSideBWE(sendsidebwe.SendSideBWEParams{
+		Config: sendsidebwe.DefaultSendSideBWEConfig, Logger: logger.GetDiscardLogger(),
+	})}
 	bandwidth.target.Store(1_200_000)
 	bandwidth.OnCongestionStateChange(bwe.CongestionStateNone, bwe.CongestionStateEarlyWarning, 100_000_000)
 	bandwidth.OnCongestionStateChange(bwe.CongestionStateEarlyWarning, bwe.CongestionStateCongested, 100_000_000)
@@ -154,10 +160,28 @@ func TestPublicationCongestionUsesCommittedCapacity(t *testing.T) {
 	if bandwidth.target.Load() != 500_000 || recorder.capacity != 500_000 {
 		t.Fatalf("publication disagrees with its committed video budget: target=%d allocation=%d", bandwidth.target.Load(), recorder.capacity)
 	}
+	info := ccutils.ProbeClusterInfo{Id: 1, CreatedAt: time.Now()}
+	bandwidth.ProbeClusterStarting(info)
+	for _, ended := range []bool{false, true} {
+		if ended {
+			info.Result.EndTime = time.Now().UnixNano()
+			bandwidth.ProbeClusterDone(info)
+		}
+		bandwidth.OnCongestionStateChange(bwe.CongestionStateNone, bwe.CongestionStateCongested, 250_000)
+		if bandwidth.target.Load() != 500_000 || recorder.capacity != 500_000 {
+			t.Fatalf("probe congestion reached encoder/allocation budget (settling=%v): target=%d allocation=%d",
+				ended, bandwidth.target.Load(), recorder.capacity)
+		}
+	}
+	bandwidth.Reset()
+	bandwidth.OnCongestionStateChange(bwe.CongestionStateCongested, bwe.CongestionStateCongested, 250_000)
+	if bandwidth.target.Load() != 250_000 || recorder.capacity != 250_000 {
+		t.Fatal("retired publication probe suppressed ordinary congestion")
+	}
 }
 
 func TestPublicationSimulcastReuseAudioDemandAndClose(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Second)
 	defer cancel()
 	check := func(err error) {
 		t.Helper()
@@ -193,12 +217,18 @@ func TestPublicationSimulcastReuseAudioDemandAndClose(t *testing.T) {
 	check(mediaEngine.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{URI: publicationRIDExtension}, webrtc.RTPCodecTypeVideo))
 	check(mediaEngine.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{URI: "urn:ietf:params:rtp-hdrext:sdes:mid"}, webrtc.RTPCodecTypeVideo))
 	registry := &interceptor.Registry{}
+	reports := &receiverReportGate{}
+	registry.Add(reports)
 	check(webrtc.RegisterDefaultInterceptors(mediaEngine, registry))
 	receiver, err := webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine), webrtc.WithInterceptorRegistry(registry), webrtc.WithSettingEngine(settings)).NewPeerConnection(webrtc.Configuration{})
 	check(err)
 	defer receiver.Close()
 	var received [3]atomic.Uint32
 	var invalid atomic.Bool
+	var lastSequence, lowSSRC, missingSequence atomic.Uint32
+	var repaired atomic.Bool
+	deltaFrame := append([]byte(nil), sfu.VP8KeyFrame8x8...)
+	deltaFrame[0] |= 1
 	receiver.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		index := 2
 		if track.Kind() == webrtc.RTPCodecTypeVideo {
@@ -212,7 +242,7 @@ func TestPublicationSimulcastReuseAudioDemandAndClose(t *testing.T) {
 			}
 		}
 		for {
-			packet, _, readErr := track.ReadRTP()
+			packet, attributes, readErr := ReadRTP(track)
 			if readErr != nil {
 				return
 			}
@@ -222,9 +252,16 @@ func TestPublicationSimulcastReuseAudioDemandAndClose(t *testing.T) {
 			if index < 2 {
 				var vp8 codecs.VP8Packet
 				payload, decodeErr := vp8.Unmarshal(packet.Payload)
-				if decodeErr != nil || !bytes.Equal(payload, sfu.VP8KeyFrame8x8) {
+				if decodeErr != nil || !(bytes.Equal(payload, sfu.VP8KeyFrame8x8) || bytes.Equal(payload, deltaFrame)) {
 					invalid.Store(true)
 					return
+				}
+			}
+			if index == 0 {
+				lastSequence.Store(uint32(packet.SequenceNumber))
+				lowSSRC.Store(packet.SSRC)
+				if uint32(packet.SequenceNumber) == missingSequence.Load() && attributes.Get(webrtc.AttributeRtxPayloadType) != nil {
+					repaired.Store(true)
 				}
 			}
 			received[index].Add(1)
@@ -263,12 +300,13 @@ func TestPublicationSimulcastReuseAudioDemandAndClose(t *testing.T) {
 		t.Fatal("publication did not attach exactly one output per encoding")
 	}
 	frame := 0
+	frameData := sfu.VP8KeyFrame8x8
 	write := func() {
 		frame++
 		pts := time.Duration(frame) * time.Second / 30
 		check(source.BeginFrame(pts, time.Now()))
 		for layer := 0; layer < 2; layer++ {
-			check(source.WriteFrame(layer, encoded.Frame{Data: sfu.VP8KeyFrame8x8, PTS: pts, Duration: time.Second / 30, Recovery: true}))
+			check(source.WriteFrame(layer, encoded.Frame{Data: frameData, PTS: pts, Duration: time.Second / 30, Recovery: bytes.Equal(frameData, sfu.VP8KeyFrame8x8)}))
 		}
 		check(audio.WriteSample(media.Sample{Data: []byte{0xf8, 0xff, 0xfe}, Duration: 20 * time.Millisecond}))
 	}
@@ -286,6 +324,48 @@ func TestPublicationSimulcastReuseAudioDemandAndClose(t *testing.T) {
 	if counters := publication.Counters(); counters.Frames[0] == 0 || counters.Frames[1] == 0 || counters.AudioBytes == 0 {
 		t.Fatalf("successful RTP writes were not accounted per encoding: %+v", counters)
 	}
+	// Lose a real simulcast packet, then delay its NACK beyond SRTP's replay
+	// window. The publishing path needs the same negotiated repair as P2P.
+	missingSequence.Store(uint32(uint16(lastSequence.Load() + 1)))
+	publication.pacer.mu.Lock()
+	publication.pacer.limit = 0
+	publication.pacer.mu.Unlock()
+	write()
+	for publication.pacer.stats().DroppedPackets < 2 {
+		select {
+		case <-time.After(time.Millisecond):
+		case <-ctx.Done():
+			t.Fatal("publication loss was not exercised")
+		}
+	}
+	publication.pacer.mu.Lock()
+	publication.pacer.limit = source.maxPackets
+	publication.pacer.mu.Unlock()
+	frameData = deltaFrame
+	for range 96 {
+		before := received[0].Load()
+		write()
+		for received[0].Load() == before {
+			select {
+			case <-time.After(time.Millisecond):
+			case <-ctx.Done():
+				t.Fatal("publication stopped before delayed feedback")
+			}
+		}
+	}
+	reports.allow.Store(true)
+	check(receiver.WriteRTCP([]rtcp.Packet{&rtcp.TransportLayerNack{
+		MediaSSRC: lowSSRC.Load(), Nacks: []rtcp.NackPair{{PacketID: uint16(missingSequence.Load())}},
+	}}))
+	for !repaired.Load() {
+		write()
+		select {
+		case <-time.After(10 * time.Millisecond):
+		case <-ctx.Done():
+			t.Fatal("publication did not recover delayed loss through negotiated RTX")
+		}
+	}
+	frameData = sfu.VP8KeyFrame8x8
 	// Once real bitrate measurements exist, one shared capacity update must
 	// constrain the sum of both video RID allocations.
 	for {
@@ -337,6 +417,17 @@ func TestPublicationSimulcastReuseAudioDemandAndClose(t *testing.T) {
 	}
 	if publication.Counters().Limited {
 		t.Fatal("publication stayed limited after requested low output recovered and high was deactivated")
+	}
+	// A live encoder can be constrained inside its sole requested RID. The
+	// inactive high RID and a fitting measured rate must not hide that demand.
+	source.SetLowestLayerRateControlled(true)
+	publication.bandwidth.target.Store(80_000)
+	if !publication.Counters().Limited {
+		t.Fatal("publication hid the current encoder's unmet 90 kbps ceiling")
+	}
+	publication.bandwidth.target.Store(1_000_000)
+	if publication.Counters().Limited {
+		t.Fatal("publication kept a limitation after the encoder ceiling was satisfied")
 	}
 	check(publication.SetActiveCount(2))
 	for received[1].Load() <= high {

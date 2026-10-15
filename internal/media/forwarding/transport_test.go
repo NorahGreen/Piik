@@ -12,6 +12,7 @@ import (
 	"github.com/livekit/livekit-server/pkg/sfu/bwe"
 	"github.com/livekit/livekit-server/pkg/sfu/ccutils"
 	"github.com/livekit/livekit-server/pkg/sfu/pacer"
+	packetpacer "github.com/livekit/mediatransportutil/pkg/pacer"
 	"github.com/livekit/protocol/logger"
 	"github.com/pion/interceptor"
 	"github.com/pion/rtcp"
@@ -22,6 +23,16 @@ import (
 )
 
 func TestTransportVideoFeedbackAudioAndClose(t *testing.T) {
+	for _, repair := range []bool{true, false} {
+		name := "RTX"
+		if !repair {
+			name = "primary-only"
+		}
+		t.Run(name, func(t *testing.T) { testTransportVideoFeedbackAudioAndClose(t, repair) })
+	}
+}
+
+func testTransportVideoFeedbackAudioAndClose(t *testing.T, repair bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	check := func(err error) {
@@ -80,11 +91,19 @@ func TestTransportVideoFeedbackAudioAndClose(t *testing.T) {
 		t.Fatal("initial configured acquisition demand was lost")
 	}
 	mediaEngine := &webrtc.MediaEngine{}
-	check(mediaEngine.RegisterDefaultCodecs())
+	if repair {
+		check(mediaEngine.RegisterDefaultCodecs())
+	} else {
+		check(mediaEngine.RegisterCodec(codec, webrtc.RTPCodecTypeVideo))
+		check(mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
+			RTPCodecCapability: audio.Codec(), PayloadType: 111,
+		}, webrtc.RTPCodecTypeAudio))
+	}
 	registry := &interceptor.Registry{}
-	check(webrtc.RegisterDefaultInterceptors(mediaEngine, registry))
 	reports := &receiverReportGate{}
+	// Inner writer also gates NACKs emitted by the default generator itself.
 	registry.Add(reports)
+	check(webrtc.RegisterDefaultInterceptors(mediaEngine, registry))
 	receiver, err := webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine), webrtc.WithInterceptorRegistry(registry),
 		webrtc.WithSettingEngine(settings)).NewPeerConnection(webrtc.Configuration{})
 	check(err)
@@ -93,13 +112,15 @@ func TestTransportVideoFeedbackAudioAndClose(t *testing.T) {
 	firstVideo := make(chan *rtp.Packet, 1)
 	paddingPackets := make(chan *rtp.Packet, 8)
 	var recoveryTimestamp atomic.Uint32
-	recovered := make(chan struct{}, 1)
+	var missingSequence uint16
+	var videoSSRC uint32
+	recovered := make(chan bool, 1)
 	var readers sync.WaitGroup
 	receiver.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		readers.Add(1)
 		defer readers.Done()
 		for {
-			packet, _, readErr := track.ReadRTP()
+			packet, attributes, readErr := track.ReadRTP()
 			if readErr != nil {
 				return
 			}
@@ -120,7 +141,7 @@ func TestTransportVideoFeedbackAudioAndClose(t *testing.T) {
 				}
 				if packet.Timestamp == recoveryTimestamp.Load() {
 					select {
-					case recovered <- struct{}{}:
+					case recovered <- attributes.Get(webrtc.AttributeRtxPayloadType) != nil:
 					default:
 					}
 				}
@@ -171,6 +192,7 @@ func TestTransportVideoFeedbackAudioAndClose(t *testing.T) {
 		case packet := <-firstVideo:
 			firstFrame = true
 			recoveryTimestamp.Store(packet.Timestamp + 3000)
+			missingSequence, videoSSRC = packet.SequenceNumber+1, packet.SSRC
 			for len(keyFrames) > 0 {
 				<-keyFrames
 			}
@@ -188,8 +210,9 @@ func TestTransportVideoFeedbackAudioAndClose(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatalf("first-frame PLI never reached source; output=%+v statsPLI=%d", transport.Output.State(), transport.Output.GetTrackStats().Plis)
 	}
-	// Force exactly one local queue-admission loss. The following RTP packet
-	// exposes its sequence gap to the receiver's normal NACK generator.
+	// Force one local loss, then delay its feedback beyond the receiver's stock
+	// SRTP replay window. Repair must use its negotiated RTX sequence space.
+	// A peer declining RTX still supports ordinary NACK within that window.
 	transport.pacer.mu.Lock()
 	transport.pacer.limit = 0
 	transport.pacer.mu.Unlock()
@@ -206,16 +229,48 @@ func TestTransportVideoFeedbackAudioAndClose(t *testing.T) {
 	transport.pacer.mu.Lock()
 	transport.pacer.limit = source.maxPackets
 	transport.pacer.mu.Unlock()
-	for _, packet := range packetizer.Packetize(sfu.VP8KeyFrame8x8, 3000) {
-		check(source.WriteRTP(0, packet))
+	deltaFrame := append([]byte(nil), sfu.VP8KeyFrame8x8...)
+	deltaFrame[0] |= 1
+	laterPackets := 96
+	if !repair {
+		laterPackets = 16
 	}
-	select {
-	case <-recovered:
-	case <-ctx.Done():
-		t.Fatal("local admission loss did not recover through library NACK")
+	for range laterPackets {
+		before := videoPackets.Load()
+		for _, packet := range packetizer.Packetize(deltaFrame, 3000) {
+			check(source.WriteRTP(0, packet))
+		}
+		for videoPackets.Load() == before {
+			select {
+			case <-time.After(time.Millisecond):
+			case <-ctx.Done():
+				t.Fatal("media stopped while delaying loss feedback")
+			}
+		}
 	}
+	reports.allowNACK.Store(true)
+	check(receiver.WriteRTCP([]rtcp.Packet{&rtcp.TransportLayerNack{
+		MediaSSRC: videoSSRC, Nacks: []rtcp.NackPair{{PacketID: missingSequence}},
+	}}))
 	ticker := time.NewTicker(time.Second / 30)
 	defer ticker.Stop()
+	for repaired := false; !repaired; {
+		select {
+		case usedRTX := <-recovered:
+			if usedRTX != repair {
+				t.Fatalf("repair path disagrees with negotiation: RTX=%v", usedRTX)
+			}
+			repaired = true
+		case <-ticker.C:
+			// Pion checks its repair queue between primary reads. Keep the
+			// live delta stream flowing without superseding the missing keyframe.
+			for _, packet := range packetizer.Packetize(deltaFrame, 3000) {
+				check(source.WriteRTP(0, packet))
+			}
+		case <-ctx.Done():
+			t.Fatal("delayed local admission loss did not recover through library NACK")
+		}
+	}
 	for {
 		_, observed := transport.TargetBitrate()
 		if videoPackets.Load() >= 15 && audioPackets.Load() >= 15 && observed {
@@ -263,10 +318,10 @@ func TestTransportVideoFeedbackAudioAndClose(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("padding packet did not arrive")
 	}
-	// A muted library sender returns zero padding bytes despite a connected PC
+	// A stopped library writer returns zero padding bytes despite a connected PC
 	// and valid RR. Its probe must finish, and inconclusive feedback must not
 	// promote the BWE's internal initial-capacity sentinel into a codec budget.
-	transport.Output.Mute(true)
+	transport.Output.StopWriteAndGetState()
 	before, _ := transport.TargetBitrate()
 	reports.allow.Store(true)
 	seenProbe := false
@@ -299,7 +354,8 @@ func TestTransportVideoFeedbackAudioAndClose(t *testing.T) {
 
 type receiverReportGate struct {
 	interceptor.NoOp
-	allow atomic.Bool
+	allow     atomic.Bool
+	allowNACK atomic.Bool
 }
 
 func (gate *receiverReportGate) NewInterceptor(string) (interceptor.Interceptor, error) {
@@ -313,6 +369,9 @@ func (gate *receiverReportGate) BindRTCPWriter(writer interceptor.RTCPWriter) in
 		}
 		var filtered []rtcp.Packet
 		for _, packet := range packets {
+			if _, nack := packet.(*rtcp.TransportLayerNack); nack && !gate.allowNACK.Load() {
+				continue
+			}
 			if _, report := packet.(*rtcp.ReceiverReport); !report {
 				filtered = append(filtered, packet)
 			}
@@ -325,11 +384,11 @@ func (gate *receiverReportGate) BindRTCPWriter(writer interceptor.RTCPWriter) in
 }
 
 type heldPacketPacer struct {
-	pacer.Pacer
-	packets []*pacer.Packet
+	packetpacer.Pacer
+	packets []*packetpacer.Packet
 }
 
-func (held *heldPacketPacer) Enqueue(packet *pacer.Packet) {
+func (held *heldPacketPacer) Enqueue(packet *packetpacer.Packet) {
 	held.packets = append(held.packets, packet)
 }
 
@@ -357,6 +416,24 @@ func TestTransportDoesNotPromoteUnverifiedCongestionCapacity(t *testing.T) {
 	transport.OnCongestionStateChange(bwe.CongestionStateCongested, bwe.CongestionStateNone, 800_000)
 	if bitrate, _ := transport.TargetBitrate(); bitrate != 500_000 {
 		t.Fatalf("clearing congestion replaced the committed reduction without a probe: %d", bitrate)
+	}
+	// A recovery probe deliberately exceeds the current media allocation. Its
+	// congestion, including late feedback while settling, cancels exploration
+	// without cutting the already committed capacity (LiveKit's allocator rule).
+	transport.probe = ccutils.ProbeClusterInfo{Id: 1}
+	for _, ended := range []bool{false, true} {
+		if ended {
+			transport.probe.Result.EndTime = 1
+		}
+		transport.OnCongestionStateChange(bwe.CongestionStateNone, bwe.CongestionStateCongested, 250_000)
+		if bitrate, _ := transport.TargetBitrate(); bitrate != 500_000 {
+			t.Fatalf("probe congestion cut committed media capacity (settling=%v): %d", ended, bitrate)
+		}
+	}
+	transport.probe = ccutils.ProbeClusterInfoInvalid
+	transport.OnCongestionStateChange(bwe.CongestionStateCongested, bwe.CongestionStateCongested, 250_000)
+	if bitrate, _ := transport.TargetBitrate(); bitrate != 250_000 {
+		t.Fatalf("post-probe media congestion did not reduce capacity: %d", bitrate)
 	}
 }
 
@@ -436,7 +513,7 @@ func TestSendQueuesDrainAfterBandwidthReduction(t *testing.T) {
 
 func TestBoundedPacerReleasesPacketsAndIsolatesBlockedQueue(t *testing.T) {
 	log := logger.GetDiscardLogger()
-	sender := pacer.NewPassThrough(log, nil)
+	sender := packetpacer.NewPassThrough(log)
 	held := &heldPacketPacer{Pacer: sender}
 	queue := newBoundedPacer(held, log, 2)
 	defer queue.Stop()
@@ -468,7 +545,7 @@ func TestBoundedPacerReleasesPacketsAndIsolatesBlockedQueue(t *testing.T) {
 	queue.Stop()
 	queue.Stop()
 	queue.Enqueue(packet())
-	// Upstream may still hold header-free tickets when it stops. Visiting one
+	// Upstream may still hold scheduling tickets when it stops. Visiting one
 	// after cancellation must neither send nor return the original a second time.
 	for _, proxy := range held.packets[1:] {
 		sender.Enqueue(proxy)
@@ -488,7 +565,7 @@ func TestBoundedPacerReleasesPacketsAndIsolatesBlockedQueue(t *testing.T) {
 
 func TestBoundedPacerCanceledProbesRetainAdmission(t *testing.T) {
 	log := logger.GetDiscardLogger()
-	sender := pacer.NewPassThrough(log, nil)
+	sender := packetpacer.NewPassThrough(log)
 	held := &heldPacketPacer{Pacer: sender}
 	queue := newBoundedPacer(held, log, 2)
 	defer queue.Stop()
@@ -530,7 +607,7 @@ func BenchmarkBoundedPacerAdmission(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			var queue pacer.Pacer = pacer.NewPassThrough(log, nil)
 			if bounded {
-				queue = newBoundedPacer(queue, log, 500)
+				queue = newBoundedPacer(packetpacer.NewPassThrough(log), log, 500)
 			}
 			defer queue.Stop()
 			writer := &countingPacketWriter{}

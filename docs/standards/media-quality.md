@@ -221,7 +221,8 @@ ADR-0007 owns probe and negotiation mechanics.
 
 Codec selection preserves the negotiated repair stream associated with the
 selected primary codec. Native and SFU receivers use standard Pion RTX/NACK;
-codec restrictions must not strip recovery or disable SRTP replay protection.
+their shared outgoing transport also offers RTX, with LiveKit owning repair.
+Codec restrictions must not strip recovery or disable SRTP replay protection.
 
 The Browser chooses the concrete encoder implementation. A reported H.264 codec
 does not by itself prove hardware acceleration, and Web content cannot select a
@@ -341,6 +342,10 @@ directly and does not re-encode that preview through a Browser publisher.
 
 Native parents and the SFU share the media forwarding adapter. Each Native
 parent considers only its direct children and its admitted SFU publication.
+Recovery-probe traffic is exploration, not a reduction of committed media
+capacity. Allocation and encoder consumers retain the same budget through probe
+settling. A locally rate-controlled output has unmet demand within its current
+layer as well as demand for larger outputs; raw forwarding cannot synthesize it.
 Compatible children reuse an available encoded output; a missing lower output
 starts one shared decode/scale/encode group, while healthy forwarding retains
 the original input without starting a decoder. The group produces the highest
@@ -464,7 +469,10 @@ quality metrics into media settings or a weighted/global route score.
 
 Native categorical evidence includes the media framework's committed allocation
 deficiency: fitting a reduced output into the available budget does not clear a
-continuing framework limitation. Publication evidence considers only requested
+continuing framework limitation, including a live encoder restricted within its
+current output. Source bitrate variation alone does not reduce a committed
+allocation or prove congestion; an unsuccessful recovery probe does not change
+the incumbent's quality category. Publication evidence considers only requested
 encodings, so an intentionally inactive encoding is not a bandwidth failure.
 Missing feedback or frame progress remains unknown. This category neither
 infers a physical bottleneck nor ranks routes by configured quality ceilings.

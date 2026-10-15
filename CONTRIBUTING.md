@@ -111,7 +111,7 @@ does not establish coverage.
   The server core is Go, so its acceptance runs here. It builds the Web UI first when
   that output is missing, because both binaries embed it. CI invokes these same
   package commands rather than rebuilding their steps in YAML.
-- `npm run check:go-race` checks port mapping, media-edge and native-control
+- `npm run check:go-race` checks port mapping, media forwarding, media-edge and native-control
   ownership, loopback delivery, service storage shutdown and scoped NAT dependencies with Go's race detector. It
   requires a supported cgo toolchain; CI runs it on Linux.
 - `npm run check:go-vuln` checks the App and Server entry points and their
@@ -138,6 +138,10 @@ does not establish coverage.
   It requires a disposable Linux runner with namespace administration. Its own
   routers contain all firewall and traffic-shaping changes; do not run it on a
   production service or treat its model results as a public success rate.
+- `gate:media-lifecycle` reuses that laboratory's real Browser/App endpoints on
+  loopback for restart, replacement and P2P/SFU continuity. It needs Chrome and
+  current App/Server binaries, without namespace or firewall changes. Synthetic
+  capture keeps it separate from physical-device and real-NAT acceptance.
 - On Windows, execute App/Server and Go test binaries only from stable
   project build paths. Go's temporary compiler/cache files are not firewall
   identities; do not run network tests with a changing temporary executable

@@ -1,6 +1,6 @@
 # Current TODO Ledger
 
-Last reviewed: 2026-10-14
+Last reviewed: 2026-10-15
 
 Explicit owner holds remain in force; an investigation does not itself
 accept a new feature or architecture. A missing device or reporter trace blocks
@@ -9,14 +9,21 @@ Git/PRs own completed history.
 
 ## Now
 
-The 2.0 implementation scope is complete. Final package checks and delivery follow
-[the release workflow](../CONTRIBUTING.md#full-integration-and-release-workflow)
-and [GitHub operations](./operations/github.md); their exact results and PR
-disposition belong to the release/PR records. The owner authorized publication
-after bounded local acceptance, without a separate field beta. Broader device
-coverage below does not override the owner's platform deferrals or require a
-statistical NAT campaign. Do not describe those unmatched reports as fixed.
+The 2.0 maintenance line retains the published protocol and route owners.
+Release artifacts and operator records own exact delivery; remaining product
+work is listed below. Broader device coverage does not override the owner's
+platform deferrals or establish a diagnosis for unmatched reports.
 
+- [ ] **Native quality recovery.** Verify the retained-connection budget and
+  current-output demand repairs against the affected Host. Local paced-sending,
+  partial-recovery and stable-allocation controls pass; they do not prove the
+  live report resolved. The publication's sole active rate-controlled RID still
+  stops probing below its ceiling. An isolated extension restores it by exposing
+  codec demand to the existing allocator, but requires an upstream input absent
+  from the current dependency; choose a bounded integration without copying the
+  whole allocator, a second controller or fabricated source measurements.
+  [Media evidence](./research/node-local-media-design.md#send-queue-recovery)
+  owns the comparisons and remaining boundary.
 ## Held By Owner
 
 - [ ] **Browser-internal encoder work.** Paused by the owner on 2026-10-01.
@@ -152,8 +159,11 @@ experiments and their limits.
   obtain the next candidate/fallback result and final state; a rejected candidate
   alone is not the share outcome. [Native media research](./research/native-client-media.md#current-boundary)
   owns the hardware checks and limits.
-- [ ] **Share ends after entering a game.** Obtain version, capture path, codec
-  and paired diagnostics. Locate the first capture/output, preview-bridge,
+- [ ] **Native sharing ends unexpectedly.** The new v2.0.0 `app/capture/failed`
+  report and earlier game-entry interruptions need matched App diagnostics.
+  The error key alone identifies neither a driver nor a timeout. The local
+  Windows lifecycle gate passes; it does not reproduce the affected setup.
+  Obtain capture path, codec and paired diagnostics. Locate the first capture/output, preview-bridge,
   control or authority failure; distinguish source silence from target replacement,
   display-mode change and device loss. [Capture research](./research/native-client-lifecycle.md#quiet-sources-and-viewer-recovery)
   owns the quiet-source behavior; an encoder output deadline remains a candidate
@@ -243,14 +253,10 @@ restore reverse feedback. Keep standard ICE recovery while that boundary remains
     Reconsider automatic storage only with a stable room-incarnation identity,
     bounded retention and a clear delete control; reusable room codes must not
     combine conversations. No new history service or wire field is authorized.
-8. **Direct OBS input (#436).** Reopen for a measured virtual-camera limitation.
-    The [capture assessment](./research/camera-and-microphone.md) records raw-frame
-    output and the WHIP boundary; virtual camera alone is not a second encode.
-    Do not add an RTMP/WHIP listener without an accepted publication owner.
-9. **Managed Demo hosting.** The [provider assessment](./operations/website.md#managed-hosting-assessment)
+8. **Managed Demo hosting.** The [provider assessment](./operations/website.md#managed-hosting-assessment)
     identifies UDP/storage requirements but establishes no cost saving. Keep the
     existing P2P-only Demo; reopen for an accepted provider and operating boundary.
-10. **Phone as a Host microphone.** The [input assessment](./research/camera-and-microphone.md#phone-microphone-assessment)
+9. **Phone as a Host microphone.** The [input assessment](./research/camera-and-microphone.md#phone-microphone-assessment)
     identifies pairing/revocation and native decoded-input ownership beyond the
     device selector. Reopen for a concrete use case that justifies this boundary
     and physical latency/echo/background checks. This does not reopen room voice.
