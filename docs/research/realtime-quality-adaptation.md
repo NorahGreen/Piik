@@ -497,18 +497,45 @@ Viewer then load only their own page plus the shared codec chunk; Join adds a
 and decoded-frame checks. This changes download, parse and retained module work,
 not media behavior or settings.
 
-The current stage decisions are therefore deliberately narrow:
+### Recovery Ownership
 
-| Stage | Current owner and decision |
+The earlier Browser measurements above do not describe the current Native or
+pooled implementation. A 2026-10-15 producer-to-consumer review distinguishes
+these recovery owners; the [media-quality standard](../standards/media-quality.md)
+owns their required behavior.
+
+| Path | Demand and recovery boundary |
 | --- | --- |
-| Capture | Keep native `getDisplayMedia`, profile constraints and `motion`; no JS video preprocessing or synthetic keepalive. |
-| Codec startup | Keep the real full-profile cadence gate; use local Trickle ICE, but do not shorten its proof or cache a device-wide verdict. |
-| Peer and relay encode | Keep one isolated clone and stock WebRTC adaptation per sender under the existing endpoint cap. Browser relay still decodes and re-encodes. |
-| SFU publication | Keep pinned LiveKit's two representations, Dynacast and send-side BWE. Observe total/active encoding counts before changing layer policy. |
-| Receive latency | Keep the Browser jitter buffer and A/V synchronizer; no fixed `jitterBufferTarget` without a loss/latency A/B. |
-| Presentation | Coalesce only Host diagnostic React commits. Media evidence, freshness and route control stay immediate. |
-| Application loading | Prefetch and execute only the current Host, Viewer or Join page; retain the same loading and access behavior. |
-| Native boundary | OS capture fallback, virtual display, shared/zero-copy encode and driver-specific capability caching require a separately accepted native product surface. |
+| Ordinary Browser P2P / relay | Host ceilings remain sender limits. WebRTC owns probing and encoder adaptation. A Browser relay cannot restore detail already removed upstream. |
+| Browser shared encoding | The outgoing carrier retains Host ceilings; its native video allocation updates the existing local producer. Actual encoded byte rate is not the producer's requested ceiling. |
+| Browser SFU publication | WebRTC budgets the aggregate simulcast upload. Fenced SFU demand controls the active prefix; profile changes retain that demand. This does not use the Native publication allocator. |
+| Native P2P / derived relay | The shared forwarding adapter retains unmet local encoder demand within the current layer and declared demand for dormant higher outputs. Group budget changes keep the transport; accepted recovery frames own group changes. |
+| Native SFU publication | Explicit unmet local encoder demand keeps the existing allocator probing even when the sole active RID fits at its reduced rate. Desired demand remains separate from measured output/capacity; see the [controlled comparison](./node-local-media-design.md#send-queue-recovery). |
+| SFU subscriber | Raw forwarding selects existing media. Declared higher-output demand can trigger probing and wake the publisher through direct-subscriber demand; the SFU does not encode missing detail. |
+
+Follow requested quality -> committed network allocation -> source frames ->
+encoded output -> delivered/decoded output when locating persistent degradation.
+Restored bandwidth with reduced source frames, restored full-size source with
+reduced encoder output, and an allocator that stopped probing are different
+failures. A quiet scene can legitimately use fewer bytes than its budget;
+receiving packets or regaining one low layer does not prove full recovery.
+Refresh replaces several of these owners at once and cannot identify the cause.
+
+This separation also exists in upstream WebRTC: its
+[probe controller](https://webrtc.googlesource.com/src/+/refs/heads/main/modules/congestion_controller/goog_cc/probe_controller.cc)
+keeps maximum allocation separate from estimated bandwidth, while encoder
+resource adaptation has its own conditions. The current-main inspection does
+not identify a particular Browser's build. Piik's
+[Browser controls](./browser-local-encoding-pool.md#sustained-h264-recovery)
+include both successful recovery and content-dependent encoder hysteresis after
+allocation recovered. Native controls separately cover budget restoration,
+dormant outputs, source replacement and retirement. Neither set establishes a
+single cause for unmatched field reports; no reset loop, minimum quality or
+second congestion controller follows from the shared symptom.
+
+The [Native encoder control](./webrtc-encoder-pool.md#budget-restoration) also
+separates restored allocation from later resolution recovery; that delay is not
+specific to Browser capture or proof that a network estimate is still low.
 
 ### Mature Product Boundaries
 
@@ -516,23 +543,60 @@ Discord documents a multi-process capture/encode/transport/decode pipeline,
 OS-specific capture fallback, hardware codec selection, WebRTC bandwidth
 estimation, and joint monitoring of cadence, latency, visual quality, network,
 CPU and memory. Its desktop client uses native capture and codec integration;
-that result is evidence for a future native boundary, not a Browser API recipe.
+that result is evidence for native pipeline boundaries, not a Browser API recipe.
 Discord also reported a real frame-drop ratchet where reconfiguring an encoder
 to its already-reduced cadence increased bits per frame and compounded drops.
 
-A signed local NetEase UU Remote 4.38.3 installation separates UI, service,
-streamer, codec detector, virtual-display and audio components. Its non-sensitive
-capability caches contain 41 encoder and 74 decoder entries keyed by codec,
-adapter/device, dimensions, frame rate, implementation, chroma sampling and bit
-depth. This supports profile-scoped capability caching and process isolation as
-mature native practices; enum meanings and proprietary algorithms were not
-inferred, and the detector was not executed.
+Signed local NetEase UU Remote installations separate UI, service, streamer,
+codec detector, virtual-display and audio components. The inspected capability
+caches key encoder/decoder support by codec, adapter/device, dimensions, frame
+rate, implementation, chroma sampling and bit depth. This supports profile-scoped
+capability caching and process isolation; the detector was not executed.
+
+A static review of 4.40.1 also found WebRTC congestion-control, quality-scaling
+and probing components. Three encoder-adapter constructors supply the same
+cadence-controller defaults: five downshift samples, a 4,000 ms observation
+window, 10% headroom and a 25% rapid-upshift threshold. Local control-flow and
+log-argument references establish that sample count and elapsed time both gate
+a downshift, with a separate rapid cadence-increase branch. These are encoder
+cadence settings, not packet-loss thresholds or verified live-session policy.
+The binary also contains ALR and rapid-recovery probing configuration; static
+presence does not establish runtime activation or equivalence to current WebRTC.
+
+The [unofficial UU Linux host](https://github.com/VallierDev/uu-remote-linux/tree/15bb35573d8b71d6fe0943d8daa46f0bdc5bc2cb)
+is a different implementation. Its inspected `capture_setting.rs`, `video.rs`
+and `webrtc.rs` use viewer-selected quality/FPS, constant-quality encoding with
+a bitrate cap, a four-frame queue and dependency-aware dropping until an IDR.
+The default subprocess path relies on a short GOP; the optional in-process
+encoder can answer PLI/FIR directly. Receiver reports feed diagnostics, with no
+sender network-estimate-to-encoder-rate loop found in this source. Its preset
+values therefore do not establish NetEase's adaptation or recovery algorithm.
 
 KOOK's official 1080p60 guidance requires substantial CPU/GPU headroom and its
 troubleshooting explicitly notes that hardware acceleration can worsen some
 systems. Oopz treats VPN/accelerator changes as an independent network-path
-diagnostic. Together these support measured fallback and stage-specific
-diagnosis rather than a universal hardware, codec or transport switch.
+diagnostic. Its inspected 0.88.41 package includes Agora and TRTC libraries;
+the packaged screen-share player entry configures Agora RTC/H264 playback with
+HLS fallback available. Bundled SDK code is not evidence that every feature is
+active, or that the publisher uses a particular QoS setting. Agora and TRTC's
+public APIs explicitly distinguish clarity from cadence preferences; TRTC also
+warns that equating minimum and target bitrate disables bitrate adaptation.
+These sources support explicit media intent and stage-specific diagnosis,
+not a universal hardware switch or a forced quality floor.
+
+The useful shared lesson is to separate congestion response, encoder cadence
+and recovery demand. WebRTC's pinned [probe controller](https://webrtc.googlesource.com/src/+/6f37672d358475cd17544121a12494da454d85fb/modules/congestion_controller/goog_cc/probe_controller.cc)
+already distinguishes a large bandwidth drop, a bounded recovery-probe window,
+ALR and maximum allocation. Its [quality scaler](https://webrtc.googlesource.com/src/+/6f37672d358475cd17544121a12494da454d85fb/modules/video_coding/utility/quality_scaler.cc)
+separately requires samples and smoothed QP evidence. Piik's Native encoder uses
+that encoder owner but receives transport budgets from Pion/LiveKit; copying a
+GCC field trial into the encoder would not repair publication allocation.
+The [publication demand repair](./node-local-media-design.md#send-queue-recovery)
+restores this input without changing congestion thresholds. Any later policy
+experiment must compare brief/repeated pulses with sustained congestion and
+low-cadence sources, measuring latency, loss, recovery and retained dimensions.
+The [Native QP comparison](./webrtc-encoder-pool.md#budget-restoration) tunes
+that existing encoder owner; Browser internals expose a different API boundary.
 
 Production room 4521 supplied a separate network/source boundary. It used one
 stable Host-to-Viewer P2P edge with no reparent or SFU activity, yet Chromium
@@ -542,6 +606,145 @@ reported `bandwidth` for 112 consecutive sender windows, estimated only
 track settings remained 30 fps, and Viewer freeze intervals followed those
 lows. The event therefore contained both native BWE degradation and source
 cadence loss; topology churn and CSS presentation were not required causes.
+
+### TeamSpeak Native Comparison
+
+The 2026-10-16 review inspected the installed TeamSpeak 6 beta5 package
+(`TeamSpeak.dll` SHA-256 prefix `b4888a71b8e7a029`) and its
+[Foundation III release](https://community.teamspeak.com/t/teamspeak-6-0-0-beta5-foundation-iii-update/65513).
+The UI uses CEF; screen sharing crosses a native bridge into libwebrtc and
+FFmpeg 8.1 encoders. CEF's Chromium version does not identify the separately
+linked native WebRTC revision. This was static inspection plus experiments
+in Piik's pipeline, not a measured TeamSpeak call or a product ranking.
+
+Stream initialization supplies three concrete field trials, established from
+their construction and environment call sites rather than string presence:
+
+| Native setting | Meaning and transfer boundary |
+| --- | --- |
+| `WebRTC-CongestionWindow/QueueSize:350,MinBitrate:300000,DropFrame:false/` | Configure GCC congestion-window pushback. The 350 ms queue allowance and 300 kbps pushback floor are not a guaranteed media bitrate; disabling drop-frame-only pushback does not disable congestion control. Piik's Native transport is Pion/LiveKit, so this encoder-side field trial cannot configure that transport. |
+| `WebRTC-VideoRateControl/bitrate_adjuster:false/` | Disable WebRTC's encoder overshoot bitrate adjuster. This does not disable the codec's own rate control. |
+| `WebRTC-FrameDropper/Disabled/` | Disable the external encoder frame dropper; other codec, queue and transport drop paths remain. |
+
+The [upstream parser](https://webrtc.googlesource.com/src/+/6f37672d358475cd17544121a12494da454d85fb/rtc_base/experiments/rate_control_settings.cc)
+and [encoder contract](https://webrtc.googlesource.com/src/+/6f37672d358475cd17544121a12494da454d85fb/api/video_codecs/video_encoder.h)
+explain these independent controls. TeamSpeak also configures FFmpeg backends
+directly: the inspected NVENC defaults include P6, low-latency tuning, CBR,
+zero reordering delay and zero lookahead; QSV uses low-delay BRC, asynchronous
+depth one and zero lookahead. Values were checked against the
+[FFmpeg NVENC definitions](https://github.com/FFmpeg/FFmpeg/blob/n8.1/libavcodec/nvenc_h264.c).
+They are backend defaults, not proof of a user's selected encoder or settings
+that can be applied to Piik's Media Foundation backend by renaming options.
+
+The same NVENC constructor enables spatial and temporal AQ, with spatial
+strength 9 and quarter-resolution multipass. These are meaningful quality/cost
+choices: [NVIDIA documents](https://docs.nvidia.com/video-technologies/video-codec-sdk/13.1/nvenc-video-encoder-api-prog-guide/index.html#adaptive-quantization-aq)
+better perceptual allocation, but also extra GPU work and greater frame-size
+variation with temporal AQ. Media Foundation does not expose this same named
+control set. Piik's existing backend avoids a second GPU integration but gives
+up those explicit tuning choices; neither its parameter trials nor its limited
+[profile comparison](./native-client-media.md#native-h264-motion-quality)
+establish equal quality to TeamSpeak's native pipeline.
+
+Shared encoding has its own per-receiver rate and dependency state. Once
+initialized, the inspected rate aggregate suppresses an update unless its bitrate changes by
+more than 10% or 200 kbps, or its frame rate changes by at least 1 fps. These
+are reconfiguration thresholds, not loss tolerance, a recovery timer or an
+instruction to ignore real congestion. The fanout path tracks lost dependency
+chains per receiver. The beta5 release separately confirms a repair for one
+stalled viewer freezing the shared encoder. Piik already separates incompatible
+consumer budgets into [output groups](./webrtc-encoder-pool.md#compatible-output-groups)
+and uses LiveKit's per-output forwarding state; copying another aggregation
+controller would replace those semantics rather than merely improve encoding.
+
+The keyframe recovery path distinguishes ignored requests from silent output
+and retains encoder-local recovery before reinitialization. Its broader watchdog
+and software-fallback state machine is not transplanted. The useful boundary is
+request versus actual output: [Chromium's Media Foundation adapter](https://chromium.googlesource.com/chromium/src/+/d5070a6099ade2fe3c953d3b3677843e1a43e87e/media/gpu/windows/media_foundation_video_encode_accelerator_win.cc)
+records whether a keyframe request was fulfilled and delivers the actual frame
+type rather than failing solely because it was not fulfilled.
+
+This comparison exposed a Windows inconsistency in Piik: every forced live
+request required immediate SPS/PPS/IDR output or failed that codec output.
+Windows now retains recovery intent until actual independent output, matching
+the existing macOS/Linux behavior. First-output admission, bitstream validation
+and real driver failures retain their existing handling. No new timer or recovery
+owner is added. A synthetic codec regression checks that a delayed response
+neither loses the request nor mislabels a delta frame. A separate 720p30 physical
+MFT encode/decode control suppressed one force command after one second:
+the previous implementation failed at `bitstream-recovery-unit`; the repair
+decoded all 75 incumbent frames, supplied a new viewer's recovery on the next
+frame and decoded its remaining 45 frames. This establishes controlled behavior,
+not a diagnosis of an untraced user's driver failure.
+
+Color conversion already has an explicit matrix/range owner and fidelity checks;
+TeamSpeak's BT.709 fix is not a reason to override Piik's tagged BT.601 WebRTC SDR
+contract. Likewise, Opus FEC driven by individual talker loss belongs to a different
+audio-feedback model than Piik's shared screen-audio output. Neither comparison
+justifies another color heuristic or per-viewer audio encoder.
+
+The two encoder field trials were applied, together and separately, to the
+existing Windows NV12/MFT H264 lab. The control retained Piik's selected
+[QP settings](./webrtc-encoder-pool.md#budget-restoration). Input was the same
+1080p30 synthetic motion, a 5 Mbps ceiling and a 12 Mbps Pion link with 20 ms
+router delay. Impairments limited that link to 400 kbps. Recovery below requires
+five consecutive samples at 1080p and at least 27 received complete AUs/s;
+these counters include parameter-set-only units. Receive gaps measure complete
+AU delivery, not decoded pictures or Browser-rendered freezes.
+
+| Encoder experiment | Three one-second limits: recovery / longest receive gap | Fifteen-second limit: recovery / longest receive gap |
+| --- | --- | --- |
+| Current Piik settings | 1.9 s / 1.48 s | 22.2 s / 6.43 s |
+| Both TeamSpeak encoder trials | 17.3 s / 2.84 s | 16.2 s / 14.96 s |
+| Only disable frame dropper | 8.1 s / 2.83 s | Not run |
+| Only disable bitrate adjuster | 15.2 s / 1.97 s | Not run |
+
+Direct-budget controls initially looked better: both trials retained 1080p
+through brief pulses and shortened sustained-limit recovery from 11 to 9 seconds.
+However, sustained 400 kbps output averaged about 746 kbps instead of 380 kbps
+over the settled low-budget interval. Coupling actual transport feedback exposed
+the delivery tradeoff above. These single runs reject a blanket transplant;
+they do not estimate TeamSpeak's performance or the probability of a field issue.
+Production retains the existing dropper and adjuster. No new controller,
+FFmpeg dependency or periodic connection reset follows from this comparison.
+
+A separate control applied the inspected bitrate-update thresholds at Piik's
+existing Native encoder demand input, without changing the transport estimator.
+At fixed 30 fps, updates passed only when their difference exceeded 10% or
+200 kbps. Four 120-second runs used the same link impairments above. Recovery
+here requires five consecutive one-second samples containing at least 27
+1080p picture AUs; parameter-set-only units are excluded.
+
+| Demand input | One-second pulses: recovery / longest picture-AU gap | Fifteen-second limit: recovery / longest picture-AU gap |
+| --- | --- | --- |
+| Current | 14.1 s / 2.39 s | 19.1 s / 6.99 s |
+| Filter small changes | 16.2 s / 1.96 s | 23.3 s / 5.22 s |
+
+Filtering reduced demand updates from 1,829 to 17 and from 1,706 to 6,
+respectively, but delayed recovery and delivered fewer picture AUs overall.
+The shorter worst gaps are a tradeoff, not an established overall improvement;
+no filter is retained. The control also varies from the earlier runs, so their
+1.9-second recovery is not a guaranteed recovery time. These remain Piik
+experiments, not measurements of TeamSpeak's complete pipeline.
+
+A follow-up tested whether tighter native rate control could make the two
+trials useful together. NVIDIA recommends small VBV for low-latency encoding;
+this does not establish TeamSpeak's selected buffer. Piik's lab set the MFT
+[H264 HRD buffer in bytes](https://learn.microsoft.com/en-us/windows/win32/codecapi/avenccommonbuffersize-property)
+to one or four frames at each rate change. On the RTX 4070 SUPER / driver 617.42,
+initial values read back correctly, but live writes returned success while
+retaining the previous value until encoder recreation. At a direct 400 kbps
+budget, four-frame buffering reduced settled output to 427 kbps, with 13 s
+recovery; one-frame buffering produced 465 kbps but was still at 360p 69 s after
+the budget returned. The four-frame variant was then exercised through the
+same periodic Pion impairment: recovery was 13.3 s, with a longest picture-AU
+delivery gap of 2.88 s, versus the existing control's 1.9 s and 1.50 s. These
+gap counts exclude parameter-set-only units but are not rendered-frame timings.
+The buffer variant therefore remains lab-only; no encoder recreation on bitrate
+updates is added to force this property to work.
+
+The [ICE comparison](./nat-traversal.md#teamspeak-ice-comparison) owns its
+separate connection-establishment findings.
 
 ## Quality Shadow
 
@@ -689,6 +892,8 @@ percentages, and tuning loops are not adopted for this Browser product.
 - [KOOK screen-share requirements](https://support.kookapp.cn/7ff3/b671)
 - [KOOK resource troubleshooting](https://help.kookapp.cn/6a2f/8525)
 - [Oopz network-path troubleshooting](https://help.oopz.cn/fa71/694b)
+- [Agora degradation preferences](https://api-ref.agora.io/en/video-sdk/android/4.x/API/enum_degradationpreference.html)
+- [TRTC encoding and QoS parameters](https://trtc.io/document/50775)
 - [LiveKit server forwarder](https://github.com/livekit/livekit/blob/v1.13.5/pkg/sfu/forwarder.go)
 - [LiveKit server defaults](https://github.com/livekit/livekit/blob/v1.13.5/pkg/config/config.go)
 - [LiveKit Dynacast manager](https://github.com/livekit/livekit/blob/v1.13.5/pkg/rtc/dynacast/dynacastmanagervideo.go)

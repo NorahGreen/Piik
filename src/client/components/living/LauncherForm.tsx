@@ -3,7 +3,7 @@ import { BrandMark } from "./BrandMark";
 import { Tooltip } from "./Tooltip";
 import { WelcomeLine } from "./WelcomeLine";
 import { Btn, Pill } from "./primitives";
-import type { HintKind } from "./hints";
+import { HintComic, type HintKind } from "./hints";
 import { Glyph, type GlyphName } from "../../ui/icons";
 import { useCopy, type CopyKey } from "../../ui/copy";
 export type AppMode = "local" | "link";
@@ -36,6 +36,8 @@ export function LauncherForm({
   mode,
   onModeChange,
   site,
+  openSiteOnStart,
+  onToggleStartupSite,
   onRemoveSite,
   siteBusy,
   siteError,
@@ -51,6 +53,8 @@ export function LauncherForm({
   mode: AppMode;
   onModeChange: (mode: AppMode) => void;
   site: string;
+  openSiteOnStart: boolean;
+  onToggleStartupSite: () => void;
   onRemoveSite: () => void;
   siteBusy?: boolean;
   siteError?: string;
@@ -99,16 +103,32 @@ export function LauncherForm({
       {children}
 
       <section className="lr-client-standby" aria-label={t("client.connect.standby")}>
-        <span className="lr-client-standby-icon" aria-hidden="true"><Glyph name="check" size={24} /></span>
-        <div className="lr-client-standby-copy">
-          <strong className={vis ? "visually-hidden" : undefined}>{t("client.connect.standby")}</strong>
-          <p className={vis ? "visually-hidden" : undefined}>{t("client.connect.standbyHint")}</p>
-          {site && <div className="lr-client-approved-site">
-            <a href={`${site}/#piik-client=1`} target="_blank" rel="noopener noreferrer" onClick={onOpen}>{site}<span aria-hidden="true"> ↗</span></a>
+        <details className="lr-client-connect-guide">
+          <summary>
+            <span className="lr-client-standby-state">
+              <Glyph name="check" size={18} />
+              <strong className={vis ? "visually-hidden" : undefined}>{t("client.connect.standby")}</strong>
+            </span>
+            <span className="lr-client-connect-toggle">
+              {vis && <Glyph name="window" size={17} />}
+              <span className={vis ? "visually-hidden" : undefined}>{t("client.connect.guide")}</span>
+              <Glyph name="chevron" size={14} />
+            </span>
+          </summary>
+          <div className="lr-client-connect-steps">
+            {vis && <HintComic kind="hint-client-site" />}
+            <p className={vis ? "visually-hidden" : undefined}>{t("client.connect.standbyHint")}</p>
+          </div>
+        </details>
+        {siteError && <p role="alert">{siteError}</p>}
+        {site && <div className="lr-client-approved-site">
+          <a href={`${site}/#piik-client=1`} target="_blank" rel="noopener noreferrer" onClick={onOpen}>{site}<span aria-hidden="true"> ↗</span></a>
+          <div className="lr-client-site-actions">
+            <Btn icon="star" title="client.connect.openOnStart" pressed={openSiteOnStart}
+              hint="hint-client-site" disabled={siteBusy} onClick={onToggleStartupSite} />
             <Btn icon="x" title="client.connect.remove" hint="hint-client-site" disabled={siteBusy} onClick={onRemoveSite} />
-          </div>}
-          {siteError && <p role="alert">{siteError}</p>}
-        </div>
+          </div>
+        </div>}
       </section>
 
       {roomError ?? (target ? <a className="lr-btn is-primary" href={target} onClick={onOpen} aria-label={t("client.launch.go")}>

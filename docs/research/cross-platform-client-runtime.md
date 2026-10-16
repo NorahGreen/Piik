@@ -222,22 +222,84 @@ allocate a new public address rather than repair the old invitation.
 
 ### Alternative Invitation Providers
 
-Reviewed 2026-10-15. [frp](https://gofrp.org/en/docs/overview/) can expose HTTP(S)
-through a server the operator supplies; [cpolar](https://www.cpolar.com/docs)
-documents HTTPS tunnels, WebSocket forwarding and regional endpoints. Neither
-has been validated with Piik here. Their service location alone does not prove
-regional reliability, and HTTP tunneling does not provide a WebRTC media route.
-An alternative must preserve the public origin, TLS and signaling WebSocket;
-it also adds account/configuration or server ownership beyond Quick Tunnel's
-temporary, account-free link. Do not substitute its executable for cloudflared:
-the current process boundary expects Cloudflare's readiness and origin events.
+Reviewed 2026-10-16 against provider documentation and upstream discussions.
+No matched evidence establishes a universally more reachable replacement for
+Quick Tunnel, especially across mainland networks. These are candidates, not
+accepted Piik integrations. Viewers must only open the invitation in a Browser;
+requiring their own account, extra software or proxy/network configuration is
+outside this path. Operator-managed tunnels belong with self-hosted Sites.
+
+| Candidate | Relevant capability | Cost to Piik's account-free invitation |
+| --- | --- | --- |
+| [localhost.run](https://localhost.run/docs/forever-free/) | Account-free HTTPS/SSH; the bounded probe below passes Piik HTTP and signaling, including an in-process Go client. | Free domains rotate and are speed-limited. Anonymous reconnection changed the URL; the cold page load was slow. |
+| [Pinggy](https://pinggy.io/) | Account-free temporary tunnels and several global regions. | Free tunnels expire after 60 minutes and show a [browser screening page](https://pinggy.io/docs/http_tunnels/screening/). Paid service changes that boundary. |
+| [ngrok](https://ngrok.com/docs/pricing-limits/free-plan-limits) | Account-bound domains; free endpoints have no session timeout. | Account/token setup, usage quotas and a browser interstitial prevent a transparent free replacement. |
+| [cpolar](https://www.cpolar.com/docs) | HTTP(S), WebSocket and selectable mainland/Hong Kong regions. | Requires account/token setup; free addresses may change within 24 hours. Region choice is not proof of access from every ISP. |
+| [frp](https://gofrp.org/en/docs/overview/) | Open-source HTTP(S) forwarding with operator-selected hosting. | Someone must run the public endpoint, domain/TLS and admission. It is not a hosted, account-free service by itself. |
+
+The pinned cloudflared has two separate proxy gaps: [Quick Tunnel allocation](https://github.com/cloudflare/cloudflared/blob/2026.8.3/cmd/cloudflared/tunnel/quick_tunnel.go)
+constructs an HTTP transport without `ProxyFromEnvironment`, and [edge dialing](https://github.com/cloudflare/cloudflared/blob/2026.8.3/edgediscovery/dial.go)
+uses a direct TCP dialer. Browser proxy settings or `HTTP_PROXY`/`HTTPS_PROXY`
+alone therefore do not route these connections. [Community #1076](https://github.com/cloudflare/cloudflared/issues/1076)
+reports the same distinction; the still-open [proxy PR #1514](https://github.com/cloudflare/cloudflared/pull/1514)
+does not establish a working Quick Tunnel fix. For users with an existing proxy,
+process/transparent routing must actually cover cloudflared; avoid routing Piik's
+unrelated media traffic through it. DNS overrides and another retry cannot repair
+an unreachable edge. Cloudflare's [China Network](https://developers.cloudflare.com/china-network/)
+is a separate Enterprise subscription, not a Quick Tunnel region switch.
+
+An alternative must preserve HTTPS, the advertised origin and signaling WebSocket.
+Do not substitute its executable for cloudflared: the current process boundary
+expects Cloudflare's readiness and origin events. A provider switch changes the
+invitation address; it cannot silently repair an active room's old link.
 
 The existing Site path already separates public web hosting from App capture.
 Use a reachable Site when Quick Tunnel is unavailable, adding its SFU only when
-media fallback is needed. No second built-in provider is justified by current
-evidence. Ordinary STUN redundancy and its independent failure controls remain
+media fallback is needed. This reuses current room authority and App authorization
+instead of adding a public tunnel service to operate. If an account-free fallback
+is reconsidered, localhost.run has the bounded evidence below; account-bound cpolar/frp
+setup is an operator choice, not a new task for Viewers. None is accepted as a
+built-in provider; the [owner hold](../todo.md#held-by-owner) excludes integration
+from the current phase.
+Ordinary STUN redundancy and its independent failure controls remain
 owned by [NAT research](./nat-traversal.md); changing the invitation provider
 does not repair blocked STUN or UDP.
+
+#### localhost.run Probe
+
+On 2026-10-16, an isolated Windows probe established anonymous `nokey` tunnels
+in about 2.5 seconds with OpenSSH and 3 seconds with the existing
+`golang.org/x/crypto/ssh` dependency. The Go probe forwarded only a new in-memory
+Piik core: its public page, invitation origin, Host/Viewer authentication,
+chat delivery and Viewer WebSocket reconnection passed. A fresh Browser reached
+the HTTPS page without an interstitial; a separate fixture passed Browser WSS
+echo and WebSocket ping/pong. All temporary tunnels and listeners were closed.
+No production provider or room/media model changed.
+
+The service can therefore work without a separate executable or user account.
+System SSH is another option, but [Windows treats it as an optional feature](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh-overview).
+The Go probe verified the server key against its isolated OpenSSH known-hosts
+file. The service emitted the registration event without acknowledging an SSH
+`exec` request; requesting no acknowledgement, as OpenSSH does, avoided waiting
+for an absent reply. A TCP bridge to the existing core preserved its HTTP and
+WebSocket ownership. Probe sources and results stay in ignored
+`build/invitation-provider-probe/`.
+
+The remaining tradeoff is service behavior. Reconnecting `nokey` allocated a
+different origin; the retired URL no longer served the fixture. A fresh,
+unregistered Ed25519 key was refused, so this check did not establish account-free
+address retention. The [provider FAQ](https://localhost.run/docs/faq/) documents
+free-name rotation after a few hours and SSH keepalives/restarts, not seamless
+anonymous URL recovery. TCP port 22 being reachable here does not establish
+mainland ISP coverage or an advantage over Cloudflare's transports.
+
+One cold Piik load reached DOMContentLoaded at 18.4 seconds and load at 20.3
+seconds; its 592 kB main script took 17.1 seconds. This is an observed run, not a
+regional benchmark or proof that the documented free-tier speed limit was the
+only cause. The tunnel carries the page and signaling, not Piik's P2P video.
+Together, address turnover and page-load cost favor evaluating it as an initial
+invitation fallback rather than replacing Cloudflare by default or switching an
+active room's address silently.
 
 ## Major-Upgrade Delivery Assessment
 

@@ -103,6 +103,11 @@ See the [App guide](../../cmd/piik-app/README.md) for package and runtime detail
 
 For Local room and Public invite, expand **Site passphrase** to set an optional
 access passphrase.
+Once the room service starts, click the connected **App** button at the top right
+to return to the launcher, manage site access or reopen the room. The App terminal
+also keeps an **App launcher** address. To change between Local room and Public
+invite, close and reopen the App, then choose again. This ends the previous room
+and generates a new public-invitation address.
 
 **Already have a Piik site?** Keep the App running, open the site and click
 **App** at the top. Check the address on the local confirmation page, then choose
@@ -119,6 +124,10 @@ in a private window or after clearing site data, connect again. The same exact
 site already approved by App needs no repeat confirmation. The launcher
 shows the approved site; **×** beside its address revokes access. Approving a different site
 replaces the previous one and ends that site's App connections.
+Select **☆** beside the address to open that site automatically next time you
+start the App. Turn it off to return to the launcher on startup. The connected
+**App** button on the site opens the launcher for these settings.
+If the site is unavailable, use the **App launcher** address in the App terminal.
 To use your App with a friend's new public-invitation address, connect and approve
 that address again. Sharing-quality settings saved in App survive the address change.
 

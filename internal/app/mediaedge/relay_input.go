@@ -29,6 +29,9 @@ type relayVideoInput struct {
 	recoveryTimestamp uint32
 	recoverySequence  uint16
 	hasRecovery       bool
+	pending           bool
+	pendingTimestamp  uint32
+	latestTimestamp   uint32
 }
 
 func (input *relayVideoInput) push(packet *rtp.Packet) error {
@@ -40,9 +43,25 @@ func (input *relayVideoInput) push(packet *rtp.Packet) error {
 		return nil
 	}
 	if input.builder == nil || recovery && (!input.hasRecovery || packet.Timestamp != input.recoveryTimestamp) {
-		if input.builder != nil {
+		previous := input.builder
+		var depacketizer rtp.Depacketizer = &codecs.H264Packet{}
+		if input.codec == "vp8" {
+			depacketizer = &codecs.VP8Packet{}
+		}
+		var builder *samplebuilder.SampleBuilder
+		builder = samplebuilder.New(relayPacketLimit, depacketizer, videoClockRate,
+			samplebuilder.WithPacketDroppedHandler(func() {
+				// Old gaps cannot request another keyframe after its replacement
+				// has arrived. Loss in the current assembly still owns recovery.
+				if input.builder == builder && input.onPacketDropped != nil {
+					input.onPacketDropped()
+				}
+			}))
+		input.builder = builder
+		input.pending = false
+		if previous != nil {
 			for {
-				sample, _ := input.builder.ForcePopWithTimestamp()
+				sample, _ := previous.ForcePopWithTimestamp()
 				if sample == nil {
 					break
 				}
@@ -54,27 +73,39 @@ func (input *relayVideoInput) push(packet *rtp.Packet) error {
 				}
 			}
 		}
-		var depacketizer rtp.Depacketizer = &codecs.H264Packet{}
-		if input.codec == "vp8" {
-			depacketizer = &codecs.VP8Packet{}
-		}
-		input.builder = samplebuilder.New(relayPacketLimit, depacketizer, videoClockRate,
-			samplebuilder.WithPacketDroppedHandler(func() {
-				if input.onPacketDropped != nil {
-					input.onPacketDropped()
-				}
-			}))
 	}
 	if recovery {
 		input.recoveryTimestamp, input.hasRecovery = packet.Timestamp, true
 		input.recoverySequence = packet.SequenceNumber
+	}
+	if len(packet.Payload) > 0 {
+		if !input.pending {
+			input.pending, input.pendingTimestamp, input.latestTimestamp = true, packet.Timestamp, packet.Timestamp
+		} else if int32(packet.Timestamp-input.latestTimestamp) > 0 {
+			input.latestTimestamp = packet.Timestamp
+		}
 	}
 	input.builder.Push(packet)
 	return nil
 }
 
 func (input *relayVideoInput) pop() (*media.Sample, uint32) {
-	return input.builder.PopWithTimestamp()
+	sample, timestamp := input.builder.PopWithTimestamp()
+	// The packet window bounds storage for large access units, not playout
+	// delay. After a second of advancing media without a complete sample, let
+	// the existing assembler discard the gap and request independent recovery.
+	// RTP time leaves quiet sources alone and adds no timer or decode owner.
+	if sample == nil && input.pending && int32(input.latestTimestamp-input.pendingTimestamp) > videoClockRate {
+		if input.onPacketDropped != nil {
+			input.onPacketDropped()
+		}
+		sample, timestamp = input.builder.ForcePopWithTimestamp()
+		input.pending = false
+	}
+	if sample != nil {
+		input.pending = false
+	}
+	return sample, timestamp
 }
 
 func (input *relayVideoInput) frame(data []byte) (nativecapture.Frame, error) {

@@ -61,8 +61,11 @@ export const zh = {
   "client.launch.room": "在这台设备上创建房间",
   "client.connect.action": "连接 Piik App",
   "client.connect.standby": "App 已就绪",
-  "client.connect.standbyHint": "打开 Piik 站点，点击顶部的 App 即可连接。",
+  "client.connect.guide": "如何连接站点",
+  "client.connect.standbyHint": "在 Piik 站点右上角点击 App，再选择「允许使用」。",
   "client.connect.remove": "取消此站点的 App 授权",
+  "client.connect.openOnStart": "启动 App 时打开此站点",
+  "client.connect.manage": "App 已就绪 · 管理 App",
   "client.connect.approveTitle": "允许使用 Piik App？",
   "client.connect.approveHint": "此站点将可以使用本机的屏幕、窗口和麦克风。请确认你信任这个网址。",
   "client.connect.approve": "允许使用",
@@ -71,7 +74,7 @@ export const zh = {
   "client.connect.return": "可以关闭此页面，返回原站点继续。",
   "client.connect.close": "关闭此页",
   "client.connect.changed": "授权站点已改变，请核对当前站点后重试。",
-  "client.connect.saveFailed": "未能完成连接更改，请重试。",
+  "client.connect.saveFailed": "未能保存设置，请重试。",
   "client.connect.invalid": "站点网址无效",
   "client.connect.unavailable": "未能连接 App。请保持 Piik App 运行，并允许浏览器打开新窗口和访问本地网络。",
   "client.connect.download": "下载 App",
@@ -403,11 +406,6 @@ export const zh = {
     "仅通过设备间连接（P2P）传输画面。连接不通时，观众将无法观看",
   "host.advanced.route.peerOnlyRequired":
     "当前服务仅支持设备间连接（P2P），隐私模式无法关闭",
-  "host.advanced.route.natPrediction": "NAT 穿透增强",
-  "host.advanced.route.natPredictionHint":
-    "借助额外探测和重试，帮助部分受限网络建立直连。浏览器和 App 均可使用",
-  "host.advanced.route.natPredictionUnavailable":
-    "当前服务未启用此增强，仍会尝试常规 P2P 连接",
   "host.advanced.codec": "视频编码",
   "host.advanced.codec.auto": "自动",
   "host.advanced.codec.autoHint": "自动选择",

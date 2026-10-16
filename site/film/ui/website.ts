@@ -1,12 +1,11 @@
 // The actual homepage, driven by the film's existing time and inert sandbox.
 import "../../main.js";
+import { applyTheme } from "../../../src/client/ui/theme";
 import { BEAT } from "../score.js";
 import { point } from "./cursor";
 
 const language = document.getElementById("language")!;
-const theme = document.getElementById("theme") as HTMLSelectElement;
-theme.value = "light";
-theme.dispatchEvent(new Event("change"));
+applyTheme("light");
 document.documentElement.style.scrollBehavior = "auto";
 document.documentElement.style.overflow = "hidden";
 document.body.style.pointerEvents = "none";
@@ -28,7 +27,9 @@ window.addEventListener("message", (event) => {
   settling = requestAnimationFrame(() => paint(data));
 });
 function paint(data: {lang: string; local: number; time: number}) {
-  if (document.documentElement.lang !== data.lang) language.click();
+  if (document.documentElement.lang !== data.lang) {
+    language.querySelector<HTMLButtonElement>(`[data-language="${data.lang}"]`)!.click();
+  }
   const download = document.getElementById("download")!;
   const button = download.querySelector<HTMLAnchorElement>(".download-button")!;
   const progress = Math.min(1, Math.max(0, (data.local - 1.25 * BEAT) / (2 * BEAT)));

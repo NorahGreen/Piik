@@ -61,8 +61,11 @@ export const en: Record<CopyKey, string> = {
   "client.launch.room": "Create a room on this device",
   "client.connect.action": "Connect Piik App",
   "client.connect.standby": "App is ready",
-  "client.connect.standbyHint": "Open a Piik Site and click App at the top to connect.",
+  "client.connect.guide": "Connect a site",
+  "client.connect.standbyHint": "Click App at the top right of a Piik site, then choose Allow access.",
   "client.connect.remove": "Revoke this Site's App access",
+  "client.connect.openOnStart": "Open this site when App starts",
+  "client.connect.manage": "App is ready · Manage App",
   "client.connect.approveTitle": "Allow this Site to use Piik App?",
   "client.connect.approveHint": "This Site will be able to use this device's screens, windows and microphone. Check that you trust this address.",
   "client.connect.approve": "Allow access",
@@ -71,7 +74,7 @@ export const en: Record<CopyKey, string> = {
   "client.connect.return": "You can close this page and return to your Site.",
   "client.connect.close": "Close page",
   "client.connect.changed": "The approved Site changed. Check it before trying again.",
-  "client.connect.saveFailed": "Could not finish the connection change. Please try again.",
+  "client.connect.saveFailed": "Could not save settings. Please try again.",
   "client.connect.invalid": "Invalid Site address",
   "client.connect.unavailable": "Could not connect to App. Keep Piik App running and allow popups and local-network access in your browser.",
   "client.connect.download": "Download App",
@@ -403,11 +406,6 @@ export const en: Record<CopyKey, string> = {
     "Share over peer-to-peer (P2P) connections only. Viewers cannot watch if those connections fail",
   "host.advanced.route.peerOnlyRequired":
     "This service supports peer-to-peer (P2P) media only, so Privacy mode is always on",
-  "host.advanced.route.natPrediction": "Enhanced NAT traversal",
-  "host.advanced.route.natPredictionHint":
-    "Use extra probes and retries to help connect across some restricted networks. Available in browsers and the App",
-  "host.advanced.route.natPredictionUnavailable":
-    "This service has not enabled the enhancement. Standard P2P connections are still attempted",
   "host.advanced.codec": "Video codec",
   "host.advanced.codec.auto": "Auto",
   "host.advanced.codec.autoHint": "Pick automatically",

@@ -12,6 +12,7 @@
 #include <thread>
 
 #include "api/environment/environment_factory.h"
+#include "api/field_trials_view.h"
 #include "api/make_ref_counted.h"
 #include "api/task_queue/task_queue_base.h"
 #include "api/task_queue/task_queue_factory.h"
@@ -33,6 +34,20 @@
 
 namespace piik::capture::windows {
 namespace {
+
+// Tune the existing scaler: five-second QP smoothing in both directions,
+// two-second base checks, and fewer required frames for low-cadence recovery.
+// Codec thresholds, congestion control and CPU adaptation stay with WebRTC.
+class CaptureFieldTrials final : public webrtc::FieldTrialsView {
+ public:
+  std::string Lookup(absl::string_view key) const override {
+    if (key == "WebRTC-Video-QualityScaling")
+      return "Enabled-29,95,149,205,24,37,26,36,0.9998,0.9998,1";
+    if (key == "WebRTC-Video-QualityScalerSettings")
+      return "initial_scale_factor:1.0,min_frames:30";
+    return {};
+  }
+};
 
 template <typename F>
 void Sync(webrtc::TaskQueueBase* queue, F fn) {
@@ -278,7 +293,7 @@ class HardwareEncoder final : public webrtc::VideoEncoder {
       const auto began = env_.clock().TimeInMilliseconds();
       const auto access_unit = encoder_->Encode(native->texture(), native->timestamp100ns(),
                                                 key_frame_pending_, native->deadline());
-      key_frame_pending_ = false;
+      if (access_unit.key_frame) key_frame_pending_ = false;
       webrtc::EncodedImage image;
       image.SetEncodedData(webrtc::EncodedImageBuffer::Create(
           access_unit.bytes.data(), access_unit.bytes.size()));
@@ -359,7 +374,8 @@ class AdaptiveEncoder::Impl final : public webrtc::VideoSourceInterface<webrtc::
   Impl(OutputKind kind, VideoProfile ceiling, ID3D11Device* device,
        Factory create, std::unique_ptr<VideoEncoder> initial, int output_index)
       : kind_(kind), ceiling_(ceiling), output_index_(output_index), device_(device), create_(std::move(create)),
-        initial_(std::move(initial)), env_(webrtc::CreateEnvironment()),
+        initial_(std::move(initial)),
+        env_(webrtc::CreateEnvironment(std::make_unique<CaptureFieldTrials>())),
         readback_(device, failure_), builtin_(webrtc::CreateBuiltinVideoEncoderFactory()),
         allocator_(webrtc::CreateBuiltinVideoBitrateAllocatorFactory()),
         worker_(env_.task_queue_factory().CreateTaskQueue(
@@ -445,6 +461,8 @@ class AdaptiveEncoder::Impl final : public webrtc::VideoSourceInterface<webrtc::
       const auto rate = webrtc::DataRate::BitsPerSec(std::min(bitrate, ceiling_.bit_rate));
       if (!bitrate_ || *bitrate_ != rate.bps()) {
         encoder_->OnBitrateUpdated(rate, rate, 0, 0, 0);
+        // VideoSendStream normally reports this separately from the encoder update.
+        stats_->OnSetEncoderTargetRate(static_cast<uint32_t>(rate.bps()));
         bitrate_ = rate.bps();
       }
       if (key_frame) encoder_->SendKeyFrame();

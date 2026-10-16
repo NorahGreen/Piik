@@ -32,7 +32,7 @@ service secret store or an untracked access-restricted environment file.
 | `ENDPOINT_MEDIA_COPY_CAPACITY` | Shared endpoint steady-copy cap `1..3`, default `2`. |
 | `STUN_URLS` | Comma-separated advertised `stun:` discovery URLs; at least one is required in production. These are not local bind addresses and may use an unproxied DNS name separate from the Web origin. |
 | `STUN_LISTEN_HOST` | Hosted IPv4 STUN bind address, default `0.0.0.0` when `STUN_URLS` is configured; independent of HTTP `LISTEN_HOST`. Local App construction creates no STUN listeners. |
-| `NAT_PREDICTION_ENABLED` | Optional bounded NAT prediction capability, default `false`; requires an ordinary `STUN_URLS` endpoint on UDP 3478. Hosted startup binds UDP 3479/3480 before advertising the capability. When unavailable, the visible NAT switch is locked off; ordinary ICE remains. Firewall reachability remains an operator requirement. |
+| `NAT_PREDICTION_ENABLED` | Optional bounded NAT prediction capability, default `false`; requires an ordinary `STUN_URLS` endpoint on UDP 3478. Hosted startup binds UDP 3479/3480 before advertising the capability. Current pages use it automatically on P2P-first sites; ordinary ICE remains available without it. Firewall reachability remains an operator requirement. |
 
 ### Room capacity
 
@@ -111,6 +111,18 @@ schema field. The user settings are:
 | `site` | One approved Piik Site origin. Local confirmation or explicit `--site` updates it; the launcher can revoke it. |
 | `localAccessPassword` | Empty by default. Optional password for the App's Local room authority, with the same exact-match behavior as `SITE_ACCESS_PASSWORD`. It is separate from a hosted site's password. |
 
+For public invitations, the optional `PIIK_STUN_URLS` environment variable
+replaces all built-in STUN destinations. It accepts a comma-separated list of
+up to six `stun:` URLs, using the Server's URL validation. With three or more
+destinations, the second and third also supply NAT prediction observations;
+one or two use ordinary ICE only. Empty or unset retains the defaults. Local
+LAN mode ignores this setting, and an approved Site supplies its own ICE
+configuration. No settings panel or additional media transport is involved.
+
+For example, in PowerShell, set `$env:PIIK_STUN_URLS = 'stun:your-stun.example:3478'`
+before running `./piik-app.exe`. Use a service you trust: STUN sees participants'
+public network addresses, but does not receive shared media.
+
 The Site's App button requests local confirmation for the page's exact origin.
 The `--site` automation input defaults to HTTPS when the scheme is omitted;
 explicit HTTP or HTTPS is preserved. Both save the normalized origin and reject
@@ -123,6 +135,11 @@ optional preference lives beside the configuration as `client.json.mode` (or
 changing saved settings. Without a valid Local/Public preference, the public
 invitation link is selected. Choosing a mode does not start it until confirmed.
 Local mode remains available for the same network.
+The star beside the approved Site selects it as the next ordinary startup page.
+This preference lives in `<config-path>.startup-site`, separately from access
+permission. Only the currently approved origin can open automatically; replacing
+or revoking approval clears the star. Unstarring restores launcher entry, and
+explicit CLI mode flags retain precedence.
 Selecting Local or Public Link, including through the CLI, preserves the saved
 Site and its allowed App origin; only local approval/revocation or `--site`
 changes it. The Site can use native capabilities while the App waits in its
@@ -277,8 +294,8 @@ contract.
 
 When `NAT_PREDICTION_ENABLED=true`, the server derives
 `stun:<same-hostname>:3479` and `:3480` from the first ordinary STUN authority
-on UDP 3478. The Host sees a pre-share switch that defaults on and may disable
-it. The capability adds no media route or third-party service. It needs both
+on UDP 3478. Current pages use the advertised capability automatically unless
+the site requires SFU-only media. It adds no media route or third-party service. It needs both
 cloud security-group rules and the host firewall. Piik
 binds every required UDP listener before opening room persistence or accepting
 signaling; a bind failure rolls back all newly owned sockets. Close and End

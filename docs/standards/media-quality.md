@@ -256,6 +256,11 @@ quality/source changes retain it. Other native platform encoders remain H264.
 
 ## Framework-Owned Adaptation
 
+Requested ceilings, committed network allocation and actual encoded output are
+separate facts. Congestion must not turn a temporary reduced output into a new
+requested ceiling. Recovery demand must survive lower-layer selection and reach
+the existing encoder or dormant-output owner without recreating the connection.
+
 Each Browser direct, relay, or SFU video sender owns a separate track. The original
 track remains a source and local presentation track; it is never attached directly
 to an outbound sender. Display capture with raw-frame stream support forwards a
@@ -356,6 +361,13 @@ never its shared video/audio source or healthy siblings.
 Native keyframe requests retain their output scope through coalescing; a relay
 requests its single upstream stream once per batch while keeping local output
 recovery separate.
+Only actual independent output fulfills an encoder recovery request. A delayed
+keyframe leaves the request pending while usable delta frames continue; it does
+not itself fail a healthy output. Initial encoder admission still requires a
+decodable starting point, and real encoding failures retain their existing owner.
+Native relay assembly bounds both packet storage and stalled media progress.
+An incomplete frame must not wait for a memory-sized packet window to fill before
+requesting recovery; quiet input and ordinary reordering remain valid.
 
 Native capture uses the same screen-share output construction within Host
 ceilings. Its source, source clock and higher outputs remain independent of
@@ -372,8 +384,10 @@ pipeline each, including source restrictions, rate correction and resource
 feedback. Resolution/FPS adaptation keeps the capture and transport identities;
 actual output dimensions update forwarding metadata without resetting sibling
 stream trackers. H264 uses native NV12/MFT and WebRTC's parsed-QP adaptation;
-VP8 uses the library encoder. Other platform producers retain their current
-fixed-output implementation pending equivalent physical acceptance.
+VP8 uses the library encoder. Windows tunes the stock QP history and sampling
+for brief interruptions and low-frame-rate recovery; codec thresholds and the
+adaptation controller remain WebRTC-owned. Other platform producers retain their
+current fixed-output implementation pending equivalent physical acceptance.
 Each source groups compatible effective direct-child requests and keeps
 incompatible weak budgets independent. Per-group rates change in place; joining
 another group's output waits for accepted recovery and keeps the existing

@@ -470,6 +470,55 @@ path remains. The four-second decision budget is unchanged. Current grouping
 at that point still folded multiple weak consumers into one low budget; the
 following integration addresses that independent requirement.
 
+### Budget Restoration
+
+Transport allocation and encoder resolution recover separately. Replaying the
+[publication budget repair](./node-local-media-design.md#send-queue-recovery)
+through unchanged synthetic 1080p30 input restored full resolution where the old
+trace retained 360p. The adapter also reports its clamped encoder target through
+`OnSetEncoderTargetRate`, as
+[VideoSendStream does](https://webrtc.googlesource.com/src/+/6f37672d358475cd17544121a12494da454d85fb/video/video_send_stream_impl.cc#1016);
+that correction fixes zero-valued diagnostics, not adaptation policy.
+
+The 2026-10-16 comparison isolates a second delay in the pinned WebRTC
+[quality scaler](https://webrtc.googlesource.com/src/+/6f37672d358475cd17544121a12494da454d85fb/modules/video_coding/utility/quality_scaler.cc).
+Its default down/up QP smoothers cover roughly two/ten seconds, and subsequent
+checks normally wait five seconds. Requiring 60 new frames further delays a
+low-cadence stream after each adaptation. Windows now supplies existing field
+trials for symmetric five-second smoothing, two-second base checks and 30
+required frames. Codec QP thresholds, drop handling and CPU adaptation retain
+their library defaults. There is no extra controller, quality floor or reset.
+
+The controls use the same actual NV12/MFT H264 encoder and 1080p30 synthetic
+motion at a 5 Mbps ceiling. A direct-budget run constrains the encoder to
+400 kbps; the coupled run constrains a 12 Mbps Pion vnet link with 20 ms router
+delay to 400 kbps and feeds real TWCC allocation back to the encoder.
+
+| Control | Previous settings | Selected settings |
+| --- | --- | --- |
+| Direct budget: three one-second limits | 720p after each pulse; 1080p about six seconds after release | Retained 1080p through all three pulses |
+| Direct budget: fifteen-second limit | 1080p 17 seconds after release | 1080p 11 seconds after release |
+| Coupled P2P: three one-second limits | Stable 1080p 26.6 seconds after final release | Stable 1080p 1.9 seconds after final release |
+| Coupled P2P: fifteen-second limit | Stable 1080p 22.3 seconds after release | Stable 1080p 22.2 seconds after release |
+| Coupled P2P: healthy link | Retained 1080p | Retained 1080p, about 30 fps, no router drops |
+
+Stable recovery requires five consecutive one-second samples at 1080p and at
+least 20 fps. The sustained coupled run did not improve total recovery time:
+its transport budget recovered after 7.0 seconds versus 2.8 seconds, while the
+following encoder delay shortened from 19.5 to 15.2 seconds. The constrained
+outputs reached 180p and 360p respectively; neither policy forces a minimum
+resolution. These single synthetic controls establish the selected behavior,
+not a network success rate, perceptual ranking or diagnosis of field reports.
+
+Chrome WebCodecs decoded all 2,871 and 3,425 received picture AUs in the selected
+sustained and periodic runs, preserving each reported dimension and timestamp.
+Parameter-set-only H264 packets are configuration, not pictures. The actual
+packaged capture helper also passed the existing VP8 and H264 640x360
+adapt/recover fixture with continuous ordered output. Encoder, source and
+PeerConnection identities remained intact. Browser WebRTC playout, physical
+capture and unrelated GPU drivers are outside these synthetic checks; page
+scripts cannot apply these native field trials to the user's Browser encoder.
+
 ### Compatible Output Groups
 
 The source now retains per-consumer demand instead of taking a minimum across
@@ -512,6 +561,23 @@ Chrome WebCodecs decodes every exported frame with its expected dimensions
 and timestamp. This proves spatial isolation and valid delivery, not weak-path
 cadence parity. Budgets in these grouping fixtures are explicit transport
 inputs; the separate shaped-network gate owns automatic estimator evidence.
+
+A subsequent [TeamSpeak comparison](./realtime-quality-adaptation.md#teamspeak-native-comparison)
+tested replacing this partition with one common output: either the maximum or
+the harmonic mean of the active requests. These are policy ablations, not a
+reproduction of TeamSpeak's receiver eligibility and dependency controller.
+The real Native VP8 fixture supplied 1280x720 motion, with requests of
+80 kbps and 1.25 Mbps for twenty seconds, then equal requests and retirement.
+The independent groups retained the healthy receiver's 640x360 output at
+roughly 1.08 Mbps during the final ten constrained seconds. A common harmonic
+output reduced its delivered payload to about 138 kbps; a common maximum sent
+about 1.20 Mbps even to the 80 kbps consumer. Both alternatives reduced the
+derived encoder count but lost independent budget ownership. All variants
+kept the decoder process while demand changed, then retired it after the last
+consumer left. Chrome WebCodecs decoded every exported picture. This bounded,
+forced-demand comparison does not measure real link capacity, perceptual
+quality or TeamSpeak's runtime performance; it supports retaining the current
+partition rather than replacing it with one aggregate rate.
 
 The full H264 Windows Host/Viewer gate also passes live and paused profile
 changes, background-profile recovery, source replacement and restart while

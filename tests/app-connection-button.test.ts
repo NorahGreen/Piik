@@ -1,7 +1,46 @@
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
-import { describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AppConnectionButton } from "../src/client/components/living/AppConnectionButton";
+import { CaptureSourcePicker } from "../src/client/components/living/CaptureSourcePicker";
+
+describe("desktop App connection entry", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each([
+    ["Android phone", "Mozilla/5.0 (Linux; Android 16) Mobile", "Linux armv8l", 5],
+    ["Android tablet", "Mozilla/5.0 (Linux; Android 16)", "Linux armv8l", 5],
+    ["iPhone", "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X)", "iPhone", 5],
+    ["iPad", "Mozilla/5.0 (iPad; CPU OS 26_0 like Mac OS X)", "iPad", 5],
+    ["desktop-mode iPad", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)", "MacIntel", 5],
+  ])("omits the desktop workflow on %s, retaining Browser and camera choices", (_, userAgent, platform, maxTouchPoints) => {
+    vi.stubGlobal("navigator", { userAgent, platform, maxTouchPoints });
+    expect(renderToStaticMarkup(createElement(AppConnectionButton))).toBe("");
+    const html = renderToStaticMarkup(createElement(CaptureSourcePicker, {
+      nativeSources: { kind: "browser" },
+      onBrowser: () => {}, onNative: () => {}, onCamera: () => {},
+      onPreview: async () => null, onRefresh: () => {}, onCancel: () => {}, onAppConnected: () => {},
+    }));
+    expect(html).toContain('data-source-tab="browser"');
+    expect(html).toContain('data-source-tab="camera"');
+    expect(html).not.toContain("lr-source-app-connection");
+  });
+
+  it.each([
+    ["touch Windows", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Win32", 10],
+    ["Mac", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)", "MacIntel", 0],
+    ["Linux", "Mozilla/5.0 (X11; Linux x86_64)", "Linux x86_64", 0],
+    ["unknown", "", "", 0],
+  ])("retains the shared connection entry on %s", (_, userAgent, platform, maxTouchPoints) => {
+    vi.stubGlobal("navigator", { userAgent, platform, maxTouchPoints });
+    expect(renderToStaticMarkup(createElement(AppConnectionButton))).toContain("lr-app-connect");
+    expect(renderToStaticMarkup(createElement(AppConnectionButton, { sourcePicker: true })))
+      .toContain("lr-source-app-connection");
+  });
+});
 
 // Exercise the button's actual operation and unmount effect without a Browser.
 // Discovery has separate transport tests; this covers who may activate a page.
@@ -27,7 +66,7 @@ const settle = () => new Promise<void>(resolve => setImmediate(resolve));
 const site = "https://site.example";
 const approval = `http://127.0.0.1:39721/client?site=${encodeURIComponent(site)}`;
 
-function mount(activated = false) {
+function mount(activated = false, state: "idle" | "ready" = "idle") {
   const popup = { closed: false, close: vi.fn(() => { popup.closed = true; }), location: { replace: vi.fn() } };
   const window = Object.assign(new EventTarget(), { open: vi.fn((): typeof popup | null => popup), location: { origin: site } });
   const native = {
@@ -44,7 +83,7 @@ function mount(activated = false) {
   const onConnected = vi.fn();
   const operation = runInNewContext(executable, {
     window, pending, healthCheck, help, showHelp, setState, activateClient, onConnected, AbortController, URL,
-    sourcePicker: false, isClientActivated: () => activated,
+    sourcePicker: false, state, isClientActivated: () => activated,
     watchClientActivation: (changed: () => void) => {
       window.addEventListener("activation", changed);
       return () => window.removeEventListener("activation", changed);
@@ -64,6 +103,18 @@ function mount(activated = false) {
 }
 
 describe("App connection approval", () => {
+  it("opens the launcher for an already connected Site without changing approval", async () => {
+    const page = mount(true, "ready");
+    await page.connect();
+    expect(page.popup.location.replace).toHaveBeenCalledWith("http://127.0.0.1:39721/client");
+    expect(page.setState).toHaveBeenLastCalledWith("ready");
+    expect(page.pending.current).toBeNull();
+    expect(page.activateClient).not.toHaveBeenCalled();
+    expect(page.onConnected).not.toHaveBeenCalled();
+    page.cleanup();
+    expect(page.popup.closed).toBe(false);
+  });
+
   it("offers recovery without activation or a stranded popup when no App is found", async () => {
     const page = mount();
     page.native.discoverNativeConnect.mockResolvedValue(null);

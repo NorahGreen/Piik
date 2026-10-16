@@ -5,10 +5,23 @@ import { Glyph } from "../../ui/icons";
 import { Tooltip } from "./Tooltip";
 import { Comic } from "./Comic";
 
-export function AppConnectionButton({ sourcePicker = false, onConnected }: {
+interface AppConnectionProps {
   sourcePicker?: boolean;
   onConnected?: () => void;
-} = {}) {
+}
+
+export function AppConnectionButton(props: AppConnectionProps) {
+  // This is a desktop-package entry, not a test of Browser capture support.
+  // iPad's desktop UA still identifies a touch-capable Mac platform.
+  if (typeof navigator !== "undefined" && (
+    /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  )) return null;
+  const button = <AppConnectionControl {...props} />;
+  return props.sourcePicker ? <div className="lr-source-app-connection">{button}</div> : button;
+}
+
+function AppConnectionControl({ sourcePicker = false, onConnected }: AppConnectionProps) {
   const { t, vis } = useCopy();
   const [state, setState] = useState<"idle" | "busy" | "ready" | "unavailable" | "incompatible">("idle");
   const [helpOpen, setHelpOpen] = useState(false);
@@ -57,6 +70,7 @@ export function AppConnectionButton({ sourcePicker = false, onConnected }: {
 
   async function connect(): Promise<void> {
     if (pending.current) return;
+    const manage = state === "ready";
     help.current?.hidePopover();
     healthCheck.current?.abort();
     // Reserve the window during the click, before local-network discovery waits.
@@ -81,11 +95,11 @@ export function AppConnectionButton({ sourcePicker = false, onConnected }: {
       }
     };
     let approvalOrigin = "";
-    const finish = (result: typeof state) => {
+    const finish = (result: typeof state, keepPage = false) => {
       window.removeEventListener("message", onMessage);
       window.removeEventListener("focus", onFocus);
       attempt.controller.abort();
-      attempt.popup?.close();
+      if (!keepPage) attempt.popup?.close();
       if (pending.current === attempt) {
         pending.current = null;
         setState(result);
@@ -107,6 +121,13 @@ export function AppConnectionButton({ sourcePicker = false, onConnected }: {
       const url = await native.discoverNativeConnect(signal);
       if (signal.aborted) return;
       if (!url) { finish("unavailable"); return; }
+      if (manage) {
+        const launcher = new URL(url);
+        launcher.searchParams.delete("site");
+        attempt.popup.location.replace(launcher.href);
+        finish("ready", true);
+        return;
+      }
       approvalOrigin = new URL(url).origin;
       attempt.popup.location.replace(url);
     } catch (error) {
@@ -114,16 +135,16 @@ export function AppConnectionButton({ sourcePicker = false, onConnected }: {
     }
   }
 
-  const label = t(state === "ready" ? "client.connect.standby" : state === "incompatible" ? "native.incompatible" :
+  const label = t(state === "ready" ? "client.connect.manage" : state === "incompatible" ? "native.incompatible" :
     state === "unavailable" ? "client.connect.unavailable" : "client.connect.action");
   const failed = state === "unavailable" || state === "incompatible";
   return <><Tooltip kind={state === "ready" ? "hint-app-ready" : state === "unavailable" ? "signal-failed" : state === "incompatible" ? "warning" : "hint-client-site"}
-    text={vis ? undefined : label} toggleOnClick={state === "ready"} disabled={helpOpen}
+    text={vis ? undefined : label} disabled={helpOpen}
     place={sourcePicker ? "above" : "below"} align="end">
     <button ref={trigger} type="button" className={`${sourcePicker ? "lr-source-picker-refresh lr-source-app-connect" : "lr-btn lr-app-connect"}${state === "ready" ? " is-ready" : ""}`}
       aria-label={sourcePicker ? t("client.connect.action") : label} aria-busy={state === "busy" || undefined}
       popoverTarget={failed ? helpId : undefined} aria-haspopup={failed ? "dialog" : undefined}
-      onClick={state === "ready" || failed ? undefined : event => {
+      onClick={failed ? undefined : event => {
         // Failure may attach popoverTarget during this click; do not toggle the
         // recovery card closed immediately after opening it.
         event.preventDefault();

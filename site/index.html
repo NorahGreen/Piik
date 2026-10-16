@@ -11,7 +11,18 @@
     <meta name="theme-color" content="#e9f2ee" />
     <title>Piik — Free, open-source screen sharing</title>
     <link rel="canonical" href="https://piik.tv/" />
-    <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="./favicon.ico" />
+    <link rel="icon" href="./assets/favicon.png" type="image/png" sizes="96x96" />
+    <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" sizes="any" />
+    <script>
+      (() => {
+        let theme = new URLSearchParams(location.search).get('theme');
+        if (theme !== 'system' && theme !== 'light' && theme !== 'dark') {
+          try { theme = localStorage.getItem('piik:ui-theme'); } catch {}
+        }
+        if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+      })();
+    </script>
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./assets/brand.css" />
     <script type="module" src="./main.js"></script>
@@ -49,18 +60,13 @@
         <a href="./docs/?lang=en" data-doc-page=""><span lang="en">Docs</span><span lang="zh-CN">文档</span></a>
       </nav>
       <div class="preferences" hidden>
-        <button id="language" type="button" lang="zh-CN" aria-label="切换到简体中文">简体中文</button>
-        <label class="theme-picker"
-          ><span class="sr-only"><span lang="en">Color theme</span><span lang="zh-CN">外观</span></span
-          ><svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="1.6" />
-            <path d="M12 4.5a7.5 7.5 0 0 1 0 15Z" fill="currentColor" /></svg
-          ><select id="theme">
-            <option value="system">System</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select></label
-        >
+        <span id="language" class="lr-lang" role="group" aria-label="Language">
+          <button type="button" data-language="zh-CN" lang="zh-CN" aria-label="简体中文" aria-pressed="false">中</button>
+          <button type="button" data-language="en" lang="en" aria-label="English" aria-pressed="true" class="is-selected">EN</button>
+        </span>
+        <button id="theme" class="lr-btn lr-theme-toggle" type="button"></button>
+        <template id="theme-light"></template>
+        <template id="theme-dark"></template>
       </div>
     </header>
 

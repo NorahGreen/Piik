@@ -104,8 +104,9 @@ Set `CHROME_PATH` to the installed Chrome executable before running. `--list`
 lists scenarios without root; `--suite full`, `--cases browser-browser,app-app`,
 `--repeat 3` and `--seed 42` select reproducible inputs. Netem seeds do not make
 browser scheduling, kernel port allocation or real-time timings deterministic.
-`--prediction compare --repeat 3` pairs the existing Host enhancement switch on
-and off with the same inputs and alternates run order. `distributions.json`
+`--prediction compare --repeat 3` pairs the isolated Site capability on and off
+with the same inputs and alternates run order. Ordinary STUN destinations stay
+available in both cases through the existing lab STUN service. `distributions.json`
 reports trial/failure counts and nearest-rank timing summaries for validated
 media trials; unavailable and timed-out attempts never become zero-millisecond
 successes. Small trial counts are observations, not population estimates.
@@ -194,7 +195,7 @@ mapping, not every consumer NAT implementation. Sequential cases use nftables'
 number generator and a typed port map: new UDP flows advance through ports
 40000..44095, with the same destination-dependent filter. Calibration must
 observe three consecutive mappings before Piik starts. All four endpoint pairs
-compare the existing enhancement switch; this switch also
+compare the enhancement capability; this capability also
 changes the retry budget, so aggregate differences do not isolate one mechanism.
 The recorded Native preparation and adoption results distinguish its use from
 ordinary ICE. Address-change cases replace only the isolated router's UDP public
@@ -267,6 +268,31 @@ Peer reaching its operation deadline before a first frame: untried fallback must
 survive that deadline, while each attempted route retains its finite budget.
 
 ## Sustained Quality Recovery
+
+P2P stage comparisons also use the existing
+[Browser shared/ordinary probe](./browser-local-encoding-pool.md#sustained-h264-recovery)
+with recorded UDP limits and decoded frames, and
+[coupled Native encoding/transport controls](./webrtc-encoder-pool.md#budget-restoration).
+Compare restored allocation, encoded dimensions and received/decoded progress
+separately. Single-codec recovery and an unblocked packet stream do not establish
+recovery of every receiver or perceptual quality.
+
+The CPU-only `TestPublicationConstrainedRecovery` gate complements the Browser
+cases below. It runs the actual Native publication allocator and Pion transport
+through healthy, brief, periodic and sustained constraints, then pause/resume
+and source replacement. It checks recent frame arrival and sustained payload,
+not decoded picture quality. Run it explicitly in a stable executable path:
+
+```powershell
+go test -c -o build/go-tests/publication-recovery.test.exe ./internal/media/forwarding
+$env:PIIK_TRANSPORT_RECOVERY = '1'
+& build/go-tests/publication-recovery.test.exe '-test.run=^TestPublicationConstrainedRecovery$' '-test.v' '-test.timeout=8m'
+Remove-Item Env:PIIK_TRANSPORT_RECOVERY
+```
+
+On other systems, use the same Go command and environment variable with the
+platform executable name. The [publication comparison](./node-local-media-design.md#send-queue-recovery)
+owns measured results and the distinction between encoder demand and capacity.
 
 The [2026-10-14 comparison](https://github.com/TNTcraftHIM/Piik/actions/runs/38446966925)
 passed two trials for each quality case on candidate `ea2c7268`, using Chrome

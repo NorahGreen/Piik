@@ -243,6 +243,10 @@ func runLauncher(
 	if err != nil {
 		slog.Debug("Could not restore the last launcher mode", diagnostics.Error(err))
 	}
+	startupSite, err := launcher.LoadStartupSite(configPath, config.Site)
+	if err != nil {
+		slog.Debug("Could not restore the startup Site", diagnostics.Error(err))
+	}
 	// Site approval and room startup mutate separate fields of one config.
 	// Serialize persistence and publish only the complete successfully saved value.
 	var configMu sync.Mutex
@@ -264,7 +268,11 @@ func runLauncher(
 		webassets.FS(),
 		launcher.Options{
 			DefaultMode: mode,
-			Site:        config.Site, Version: buildVersion(), Revision: BuildRevision,
+			StartupSite: startupSite,
+			SaveStartupSite: func(site string) error {
+				return launcher.SaveStartupSite(configPath, site)
+			},
+			Site: config.Site, Version: buildVersion(), Revision: BuildRevision,
 			LocalAccessPassword: config.LocalAccessPassword,
 			Debug:               options.Debug, LANAddress: options.LANAddress,
 			ChangeSite: func(site string) (string, error) {
@@ -286,6 +294,9 @@ func runLauncher(
 	defer func() { returnedErr = errors.Join(returnedErr, launch.Close()) }()
 	control.SetConnectURL(launch.URL())
 	defer control.SetConnectURL("")
+	// Launcher entry lives with the resident App, independently of room views.
+	options.console.send(consoleLauncher(launch.URL()))
+	defer options.console.send(consoleLauncher(""))
 	launchAddress, err := url.Parse(launch.URL())
 	if err != nil {
 		return err
@@ -297,12 +308,12 @@ func runLauncher(
 	if err != nil {
 		return err
 	}
-	if !automatic {
+	if !automatic && startupSite == "" {
 		options.console.show(consoleView{state: "setup", entry: launch.URL()})
 		options.console.openBrowser(launch.URL())
 	} else if initialConfig.Site != "" && !options.Local && !options.Link {
-		// --site is still an explicit approval shortcut. It supplies native
-		// capabilities immediately; the launcher can start a Local room later.
+		// A starred Site changes only the opening page. --site also remains an
+		// explicit approval shortcut; the launcher can start a Local room later.
 		openSite(initialConfig.Site, options)
 	}
 	// An interactive room is a child of the resident App. Its failure must not
@@ -477,6 +488,10 @@ func openSite(site string, options Options) {
 func runLocal(ctx context.Context, options Options, config appconfig.Config,
 	control *loopback.Server,
 ) (returnedErr error) {
+	stunURLs, natPredictionStunURLs, err := localSTUNURLs(options.Link)
+	if err != nil {
+		return err
+	}
 	view := consoleView{mode: "local", state: "starting", protected: config.LocalAccessPassword != ""}
 	if options.Link {
 		view.mode = "link"
@@ -524,7 +539,6 @@ func runLocal(ctx context.Context, options Options, config appconfig.Config,
 		slog.Debug("piik-client", "event", "public-link-ready")
 	}
 
-	stunURLs, natPredictionStunURLs := localSTUNURLs(options.Link)
 	localConfig, err := serverconfig.Local(serverconfig.LocalOptions{
 		Port:                  options.Port,
 		PublicAddress:         selectedAddress,
@@ -703,14 +717,26 @@ func discoverNativeMedia(ctx context.Context, configuredPath string) nativeRunti
 // has a public path, so only --link configures public STUN and the bounded NAT
 // prediction survey. Native edges receive ICE configuration from that authority;
 // serverconfig.Local deliberately does not inherit Hosted environment settings.
-// All three destinations also serve ordinary discovery: disabling prediction
-// must not make public-link ICE depend on a single STUN operator.
-func localSTUNURLs(link bool) (stunURLs []string, natPredictionSTUNURLs []string) {
+// An explicit App override replaces every public destination, including the
+// survey pair. With fewer than three servers only ordinary ICE is available.
+func localSTUNURLs(link bool) (stunURLs []string, natPredictionSTUNURLs []string, err error) {
 	if !link {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return []string{publicSTUNURL, publicFallbackSTUNURLA, publicFallbackSTUNURLB},
-		[]string{publicFallbackSTUNURLA, publicFallbackSTUNURLB}
+	stunURLs, err = serverconfig.ParseSTUNURLs(os.Getenv("PIIK_STUN_URLS"), "PIIK_STUN_URLS")
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(stunURLs) == 0 {
+		stunURLs = []string{publicSTUNURL, publicFallbackSTUNURLA, publicFallbackSTUNURLB}
+	}
+	if len(stunURLs) >= 3 {
+		if len(stunURLs) > protocol.MaxIceServerURLs-protocol.MaxNatPredictionAuxiliaryStunURLs {
+			return nil, nil, errors.New("PIIK_STUN_URLS must contain at most 6 URLs")
+		}
+		natPredictionSTUNURLs = stunURLs[1:3]
+	}
+	return stunURLs, natPredictionSTUNURLs, nil
 }
 
 // endLocalServer is step 1 of the ADR-0010 item 12 unwind: every room ends,

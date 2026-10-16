@@ -186,6 +186,21 @@ selection tasks visually interchangeable.
 The brand mascot keeps its own identity, separate from ordinary participants.
 Participant characters should leave room for that distinctive presence.
 
+The App badge and favicons derive from [one SVG](../../public/favicon.svg):
+a dark navy tile, warm white television outline and small gold sparkle. The
+unfilled television, antenna, feet and wink keep the proportions of `BrandMark`;
+do not give the badge a filled case or a separate screen. This palette stays
+fixed across system themes. Keep the badge recognisable at 16–48 px by
+strengthening thin strokes in tiny exports. Inline brand
+marks keep the same wink identity with their existing outline and motion.
+Their stroke inherits the local surface's text colour:
+dark ink on light surfaces, light ink on dark surfaces, including deliberately
+light panels within a dark page. Gold sparkles remain a brand accent in both
+forms. Do not assign black/white outlines independently at each call site.
+The badge identifies App packages, browser tabs and search results. In-page
+branding and the [README mark](../assets/brand-mark.svg) keep the unboxed outline;
+changing the badge does not restyle the UI, wordmark or illustrations.
+
 | Meaning | Representation |
 | --- | --- |
 | The person using the pictured action | Green pawn (`YOU` / `--you`), in every panel |
@@ -266,6 +281,7 @@ type checking rather than silently render a warning triangle.
 | Credential / 凭证 | `key`, password dots | Site passphrase or room password, identified by the field label. Room-code admission with a password shows both fields. |
 | Restriction / 受限 | `lock` | Restricted entry, concealed password or a setting fixed by availability; show the affected object. A lock never promises anonymity or secure media. |
 | Site and public entry / 站点与公开入口 | `globe` | Browser/Site entry or code-based public entry. It does not claim internet reachability. |
+| Preferred destination / 默认去处 | `star` | A user-selected default, such as the App's startup Site. It is a preference, not authorization or connection health. |
 | Connections / 连接 | `network`, `branch`, `signal`, `wifiOff`, `server` | Topology, branching, signaling, disconnected signaling and the named server. A server on a media path means forwarding; a Site backend or control-link server alone does not imply SFU. An invitation chain does not represent signaling. |
 | Playback / 播放 | `play`, `pause`, `stop` | Play/resume, pause, end. The control label states whether it affects local viewing or the Host's share. Stop is distinct from a paused or idle room. |
 | Audio / 声音 | `speaker`, `speakerOff` | Audio and mute/no audio, qualified by the source or local playback label. A source track's presence does not establish delivered sound. |
@@ -449,9 +465,8 @@ Meaning must also survive without colour through objects, symbols and accessible
 localized names. Never show celebration or a completed live path as the verdict
 of a failed or unavailable operation.
 
-A missing optional feature is not a failed media path. For example, unavailable
-NAT prediction marks only extra candidate paths; ordinary P2P remains a neutral
-possibility. A rejected PiP request is failure; lack of PiP support is a limitation.
+A missing optional feature is not a failed media path. A rejected PiP request is
+failure; lack of PiP support is a limitation.
 
 ## Motion Grammar
 

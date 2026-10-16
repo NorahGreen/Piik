@@ -23,6 +23,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	appconfig "github.com/TNTcraftHIM/Piik/internal/app/config"
 	"github.com/TNTcraftHIM/Piik/internal/app/lan"
+	"github.com/TNTcraftHIM/Piik/internal/app/launcher"
 	"github.com/TNTcraftHIM/Piik/internal/app/loopback"
 	serverconfig "github.com/TNTcraftHIM/Piik/internal/server/config"
 )
@@ -309,7 +310,7 @@ func TestLauncherRetainsItsRuntimeFailureDuringCancellation(t *testing.T) {
 
 func TestHungBrowserHandoffDoesNotBlockLauncherOrSiteExit(t *testing.T) {
 	t.Setenv("TERM", "dumb")
-	for _, mode := range []string{"launcher", "site"} {
+	for _, mode := range []string{"launcher", "site", "starred-site", "revoked-site"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -327,6 +328,14 @@ func TestHungBrowserHandoffDoesNotBlockLauncherOrSiteExit(t *testing.T) {
 			config, err := appconfig.LoadOrCreate(configPath)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if mode == "starred-site" || mode == "revoked-site" {
+				if err := launcher.SaveStartupSite(configPath, "https://share.example"); err != nil {
+					t.Fatal(err)
+				}
+				if mode == "starred-site" {
+					config.Site = "https://share.example"
+				}
 			}
 			done := make(chan error, 1)
 			go func() {
@@ -348,6 +357,21 @@ func TestHungBrowserHandoffDoesNotBlockLauncherOrSiteExit(t *testing.T) {
 			console.mu.Unlock()
 			if model.view.entry == "" {
 				t.Fatal("manual entry was not available while browser opening hung")
+			}
+			if mode == "site" || mode == "starred-site" {
+				if model.view.entry != launchURL("https://share.example") {
+					t.Fatalf("App did not open the selected Site: %s", model.view.entry)
+				}
+				response, err := http.Get(model.launcher)
+				if err != nil {
+					t.Fatalf("launcher management is unavailable: %v", err)
+				}
+				response.Body.Close()
+				if response.StatusCode != http.StatusOK {
+					t.Fatal("Site entry lost access to the launcher")
+				}
+			} else if !strings.HasSuffix(model.view.entry, "/client") {
+				t.Fatalf("App did not preserve launcher entry: %s", model.view.entry)
 			}
 			for range 5 {
 				_, command := model.Update(tea.KeyPressMsg{Code: 'o'})
@@ -739,10 +763,12 @@ func TestLocalServerOwnsItsSTUNConfiguration(t *testing.T) {
 	for _, testCase := range []struct {
 		name                  string
 		link                  bool
+		override              string
 		stunURLs              []string
 		natPredictionSTUNURLs []string
 	}{
 		{name: "local"},
+		{name: "local ignores public override", override: "invalid"},
 		{
 			name: "link", link: true,
 			stunURLs: []string{publicSTUNURL, publicFallbackSTUNURLA, publicFallbackSTUNURLB},
@@ -750,9 +776,23 @@ func TestLocalServerOwnsItsSTUNConfiguration(t *testing.T) {
 				publicFallbackSTUNURLA, publicFallbackSTUNURLB,
 			},
 		},
+		{
+			name: "custom discovery", link: true, override: "stun:chosen.test:3478",
+			stunURLs: []string{"stun:chosen.test:3478"},
+		},
+		{
+			name: "custom survey", link: true,
+			override:              "stun:a.test:3478, stun:b.test:3478, stun:c.test:3478",
+			stunURLs:              []string{"stun:a.test:3478", "stun:b.test:3478", "stun:c.test:3478"},
+			natPredictionSTUNURLs: []string{"stun:b.test:3478", "stun:c.test:3478"},
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			stunURLs, natPredictionSTUNURLs := localSTUNURLs(testCase.link)
+			t.Setenv("PIIK_STUN_URLS", testCase.override)
+			stunURLs, natPredictionSTUNURLs, err := localSTUNURLs(testCase.link)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if !slices.Equal(stunURLs, testCase.stunURLs) ||
 				!slices.Equal(natPredictionSTUNURLs, testCase.natPredictionSTUNURLs) {
 				t.Fatalf("Local STUN selection = %v, %v", stunURLs, natPredictionSTUNURLs)
@@ -769,11 +809,18 @@ func TestLocalServerOwnsItsSTUNConfiguration(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !slices.Equal(config.STUNURLs, testCase.stunURLs) ||
-				config.NATPredictionEnabled != testCase.link {
+				config.NATPredictionEnabled != (len(testCase.natPredictionSTUNURLs) != 0) {
 				t.Fatalf("Local server config = %v, NAT prediction %t",
 					config.STUNURLs, config.NATPredictionEnabled)
 			}
 		})
+	}
+	for _, value := range []string{"turn:chosen.test:3478", "stun:a.test:3478,,stun:b.test:3478",
+		"stun:a:1,stun:b:2,stun:c:3,stun:d:4,stun:e:5,stun:f:6,stun:g:7"} {
+		t.Setenv("PIIK_STUN_URLS", value)
+		if _, _, err := localSTUNURLs(true); err == nil {
+			t.Fatalf("invalid public STUN list accepted: %q", value)
+		}
 	}
 }
 

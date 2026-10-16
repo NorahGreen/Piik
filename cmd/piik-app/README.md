@@ -27,6 +27,8 @@ publication are separate steps in [deployment](../../docs/deployment.md).
 - With no mode argument, the App opens its launcher and waits for use by an
   approved Site. Choose **Local room** or **Public invite** to start a room
   service on this device and enter the normal Host page.
+  Star an approved Site in the launcher to open it on startup instead;
+  turn the star off to restore the launcher. Replacing or revoking the Site clears this choice.
 - The launcher remembers the last mode confirmed with **Open Piik**. Without a
   saved Local/Public choice, it selects Public invite and waits for confirmation.
   The mode preference is stored beside the settings in `client.json.mode`;
@@ -45,6 +47,14 @@ temporary HTTPS address. Picture and sound travel between participants (P2P),
 outside the tunnel. Both modes need a usable UDP media path and provide no
 media-server forwarding (SFU) or TURN relay fallback. The
 [routing reference](../../docs/standards/routing-transport.md) explains connection setup.
+
+Public invite uses Cloudflare, MiWiFi (Xiaomi) and Bilibili STUN services to
+discover reachable addresses. Each contacted operator can see your public IP,
+port and request timing; these requests contain no shared media, chat or room
+password. NAT enhancement uses the same destinations automatically.
+To choose your own STUN services for public invitations, set `PIIK_STUN_URLS`
+before starting App; see [App configuration](../../docs/standards/configuration.md#piik-app-configuration).
+An approved Site supplies its own `STUN_URLS`; App Local rooms configure no public STUN.
 
 For Local invitations, the App automatically selects a sole active address or
 sole private IPv4. If several addresses remain possible, choose an interface
@@ -221,6 +231,12 @@ carries that same full Git revision as the package `REVISION`. App/Site
 interoperability follows the
 [public compatibility contract](../../docs/standards/versioning.md#public-compatibility-promise).
 
+For a native Host smoke run, launch the App and select a window in the Host
+page, then open its invitation on another device. Choose the mode for that
+network as described [above](#modes).
+
+### Desktop Icons
+
 The Windows App embeds the shared Piik mark through the
 `cmd/piik-app/piik_windows_amd64.syso` resource; the platform
 suffix keeps that Windows resource out of Linux and macOS builds.
@@ -228,9 +244,17 @@ Linux packages include the standard `share/applications` desktop entry and
 hicolor icon. macOS packages include a thin `Piik App.app` launcher
 with an ICNS resource; the raw Go executable remains available beside it.
 
-For a native Host smoke run, launch the App and select a window in the Host
-page, then open its invitation on another device. Choose the mode for that
-network as described [above](#modes).
+The editable badge is [public/favicon.svg](../../public/favicon.svg).
+Export it at 16/24/32/48/64/128/256 px as PNG entries in `cmd/piik-app/piik.ico`;
+the package builder derives Linux and macOS icons from those entries. Keep the
+website exports in sync: `public/favicon.png` at 96 px, and `public/favicon.ico`
+with 16/32/48 px entries. Check actual small sizes on light and dark backgrounds.
+Render the SVG at each target size so its small-icon styling applies.
+Then regenerate the Windows resource from the repository root:
+
+```sh
+go run github.com/akavel/rsrc@v0.10.2 -ico cmd/piik-app/piik.ico -arch amd64 -o cmd/piik-app/piik_windows_amd64.syso
+```
 
 ## Gates
 

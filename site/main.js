@@ -1,6 +1,7 @@
 import { mountBrands } from './assets/brand.js';
 import { initialLanguage, rememberLanguage } from './assets/language.js';
 import { createTextCycle } from '../src/client/ui/text-rotation.ts';
+import { applyTheme, currentTheme, currentThemePreference, initTheme, subscribeTheme } from '../src/client/ui/theme.ts';
 import { DEFAULT_RELEASE_API_URL, parseReleaseMetadata } from '../src/client/lib/release-update.ts';
 mountBrands();
 const architecturePickers = document.querySelectorAll('.download-architecture');
@@ -68,30 +69,32 @@ function syncWelcome() {
 function syncFilmPreferences() {
   const target = new URL(filmLink.href);
   target.searchParams.set('lang', root.lang);
-  target.searchParams.set('theme', theme.value);
+  const preference = currentThemePreference() ?? 'system';
+  target.searchParams.set('theme', preference);
   filmLink.href = target.href;
-  filmFrame.contentWindow?.postMessage({type:'piik-film-preferences',lang:root.lang,theme:theme.value}, location.origin);
+  filmFrame.contentWindow?.postMessage({type:'piik-film-preferences',lang:root.lang,theme:preference}, location.origin);
 }
 const copy = {
   en: {
     title: document.title,
     description: description.content,
-    themes: Object.fromEntries(Array.from(theme.options, (option) => [option.value, option.textContent])),
     image: roomIllustration.alt,
   },
   'zh-CN': {
     title: 'Piik — 免费开源的屏幕共享',
     description: 'Piik 是免费开源的私密屏幕共享工具，适合游戏直播、一起看电影、展示绘画和照片。支持自部署站点，邀请最多 20 位朋友通过浏览器观看。',
-    themes: { system: '跟随系统', light: '浅色', dark: '深色' },
     image: '戴着小金冠的房主分享 RPG 游戏、绘画、旅行照片和动画电影，三位朋友坐在沙发上观看。',
   },
 };
 function setLanguage(lang) {
   root.lang = lang;
   const chinese = lang === 'zh-CN';
-  language.lang = chinese ? 'en' : 'zh-CN';
-  language.textContent = chinese ? 'English' : '简体中文';
-  language.setAttribute('aria-label', chinese ? 'Switch to English' : '切换到简体中文');
+  language.setAttribute('aria-label', chinese ? '语言' : 'Language');
+  for (const button of language.querySelectorAll('button')) {
+    const selected = button.dataset.language === lang;
+    button.classList.toggle('is-selected', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  }
   const current = copy[root.lang];
   document.title = current.title;
   description.content = current.description;
@@ -102,35 +105,40 @@ function setLanguage(lang) {
     link.href = `./docs/${chinese ? 'zh/' : ''}${link.dataset.docPage}${chinese ? '' : '?lang=en'}`;
   }
   filmFrame.title = chinese ? 'Piik 宣传片' : 'Piik introduction';
-  for (const option of theme.options) option.textContent = current.themes[option.value];
+  syncThemeControl();
   syncWelcome();
   syncFilmPreferences();
 }
-language.addEventListener('click', () => {
-  setLanguage(root.lang === 'zh-CN' ? 'en' : 'zh-CN');
-  rememberLanguage(root.lang);
-});
-function syncThemeColor() {
+for (const button of language.querySelectorAll('button')) {
+  button.addEventListener('click', () => {
+    if (root.lang !== button.dataset.language) setLanguage(button.dataset.language);
+    rememberLanguage(root.lang);
+  });
+}
+function syncThemeControl() {
+  const target = currentTheme() === 'dark' ? 'light' : 'dark';
+  if (theme.dataset.target !== target) {
+    theme.replaceChildren(document.getElementById(`theme-${target}`).content.cloneNode(true));
+    theme.dataset.target = target;
+  }
+  theme.setAttribute('aria-label', theme.querySelector(`[lang="${root.lang}"]`).dataset.label);
   document.querySelector('meta[name="theme-color"]').content = getComputedStyle(root).getPropertyValue('--wall').trim();
 }
-theme.addEventListener('change', () => {
-  root.dataset.theme = theme.value;
-  syncThemeColor();
+theme.addEventListener('click', (event) => {
+  if (event.detail !== 0) theme.blur();
+  applyTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+});
+subscribeTheme(() => {
+  syncThemeControl();
   syncFilmPreferences();
 });
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncThemeColor);
-syncThemeColor();
-document.querySelector('.preferences').hidden = false;
 
 // Ordinary links carry explicit choices between the page and its film.
 const preferences = new URLSearchParams(location.search);
+const requestedTheme = preferences.get('theme');
+initTheme(requestedTheme === 'system' ? null : ['light', 'dark'].includes(requestedTheme) ? requestedTheme : undefined);
 setLanguage(initialLanguage());
-if (['light', 'dark'].includes(preferences.get('theme'))) {
-  theme.value = preferences.get('theme');
-  root.dataset.theme = theme.value;
-  syncThemeColor();
-}
-syncFilmPreferences();
+document.querySelector('.preferences').hidden = false;
 filmLink.setAttribute('aria-controls', 'film-preview');
 filmLink.setAttribute('aria-expanded', 'false');
 filmLink.addEventListener('click', (event) => {

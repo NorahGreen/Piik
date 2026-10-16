@@ -23,6 +23,8 @@ Apple 芯片或 Intel Mac，以及 macOS 13 或更新版本。构建程序包与
 
 - 不传模式参数时，App 打开启动页，等待已授权站点使用。选择 **本地房间** 或
   **公网邀请**，可在这台设备上启动房间服务，进入通常的房主页面。
+  在启动页点亮已授权站点旁的星标，下次就会直接打开该站点；取消星标后恢复启动页。
+  替换站点或取消授权也会清除星标。
 - 启动页会记住上次点击 **进入 Piik** 确认的模式。
   没有已保存的本地/公网选择时，默认选中公网邀请；确认后才启动。
   模式偏好保存在配置旁的 `client.json.mode` 中；保存项与自定义路径见
@@ -37,6 +39,12 @@ Apple 芯片或 Intel Mac，以及 macOS 13 或更新版本。构建程序包与
 画面和声音在参与者之间传输（P2P），不经过隧道。这两种模式都需要可用的 UDP 媒体路径，
 没有媒体服务器转发（SFU）或 TURN 中继兜底。连接机制见
 [路由参考](../../docs/standards/routing-transport.md)。
+
+公网邀请使用 Cloudflare、小米和 Bilibili 的 STUN 服务发现可连接地址。
+被联系的服务商能看到你的公网 IP、端口和请求时间；这些请求不包含分享画面、声音、
+聊天或房间密码。NAT 增强会自动使用同一组地址。公网邀请可在启动 App 前通过
+`PIIK_STUN_URLS` 替换 STUN 服务，示例见 [App 配置](../../docs/standards/configuration.md#piik-app-configuration)。
+搭配已授权站点时使用站点的 `STUN_URLS`；App 本地房间不配置公共 STUN。
 
 本地邀请会自动选择唯一的活动地址或唯一的私有 IPv4 地址。仍有多个可能地址时，
 请在启动页选择网卡和 IP。公网邀请和搭配站点使用时无需选择局域网地址。
@@ -178,13 +186,26 @@ runtime/tunnel/cloudflared[.exe] # 支持 --link 的程序包
 App 内嵌所用应用发布产物的浏览器资源，程序内的完整 Git 版本与包内 `REVISION` 一致。
 App 与站点之间的互操作遵循[公开兼容规则](../../docs/standards/versioning.md#public-compatibility-promise)。
 
+执行原生房主冒烟检查时，启动 App，在房主页面选择一个窗口，再用另一台设备打开邀请。
+按[运行模式](#运行模式)说明选择适合该网络的模式。
+
+### 桌面图标
+
 Windows App 通过 `cmd/piik-app/piik_windows_amd64.syso` 资源内嵌共享的 Piik 标识；
 平台后缀使该 Windows 资源不参与 Linux 和 macOS 构建。
 Linux 程序包包含标准的 `share/applications` 桌面入口与 hicolor 图标。
 macOS 程序包包含一个带 ICNS 资源的轻量 `Piik App.app` 启动器，原始 Go 程序仍保留在它旁边。
 
-执行原生房主冒烟检查时，启动 App，在房主页面选择一个窗口，再用另一台设备打开邀请。
-按[运行模式](#运行模式)说明选择适合该网络的模式。
+图标源文件为 [public/favicon.svg](../../public/favicon.svg)。
+将它按 16/24/32/48/64/128/256 px 导出为 PNG 图层，写入 `cmd/piik-app/piik.ico`；
+打包脚本从这些图层生成 Linux 和 macOS 图标。同时更新网站导出：96 px 的
+`public/favicon.png`，以及包含 16/32/48 px 图层的 `public/favicon.ico`。
+按每个目标尺寸渲染 SVG，让小图标样式生效。检查深浅背景下的实际小尺寸效果，
+然后在仓库根目录重新生成 Windows 资源：
+
+```sh
+go run github.com/akavel/rsrc@v0.10.2 -ico cmd/piik-app/piik.ico -arch amd64 -o cmd/piik-app/piik_windows_amd64.syso
+```
 
 ## 验证入口
 

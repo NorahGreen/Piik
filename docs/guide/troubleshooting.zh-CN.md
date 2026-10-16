@@ -173,6 +173,7 @@ Windows 需要用户授权；其他采集要求显示边框时，边框仍会保
 ## 公网邀请创建失败或出现 1033
 
 App 的 **公网邀请** 通过 Cloudflare Tunnel 提供临时网页地址。
+该服务的可达性会随网络而变化，[Quick Tunnels 不保证持续可用](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/#limitations)。
 `public invitation service exited before connecting` 表示辅助程序在连接完成前退出；
 `exit status 1` 本身不能说明具体原因。
 [Cloudflare 的 1033 说明](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1033/)（英文）
@@ -186,11 +187,24 @@ App 的 **公网邀请** 通过 Cloudflare Tunnel 提供临时网页地址。
 3. **对照网络。** 可用手机热点重试，检查 DNS、代理或防火墙是否阻止 Cloudflare Tunnel。
    只调整相关规则；学校或公司的网络应联系管理员。
 
-如果终端中的超时错误带有 `:7844`，请检查 `cloudflared` 的出站连接，
-包括代理或游戏加速器的规则。[Cloudflare 连接检查](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/troubleshoot-tunnels/connectivity-prechecks/)（英文）
-说明了该端口的 UDP 和 TCP 要求，无需在路由器上开放入站端口。
+使用代理时，请确认它实际覆盖 `cloudflared` 进程。仅开启浏览器代理或设置
+`HTTP_PROXY`／`HTTPS_PROXY`，不会让当前随包的隧道程序自动走代理。
 
-反复失败时可先通过[在线版或已有站点](./getting-started.zh-CN.md#使用已有站点分享)分享。
+错误详情可以帮助区分失败的环节：
+
+| 错误中出现 | 检查什么 |
+| --- | --- |
+| `failed to request quick Tunnel`、`api.trycloudflare.com` | 临时地址申请失败。查看后面的具体原因：域名解析错误检查 DNS；连接超时检查 HTTPS 出站连接、代理或服务状态。 |
+| QUIC 超时、`dial tcp ...:7844` 或 `TLS handshake with edge` | 到 Cloudflare 隧道节点的连接失败。检查 `cloudflared` 的出站规则，包括代理或游戏加速器是否影响该连接。 |
+
+Piik 已启用 QUIC（UDP）失败后尝试 HTTP/2（TCP），两者都使用出站端口 `7844`。
+如果两条线路都不可达，反复重试也无法解决；浏览器能访问普通网页不代表该端口可用。
+具体要求见 [Cloudflare 连接排查](https://developers.cloudflare.com/tunnel/troubleshooting/)（英文），
+无需在路由器上开放入站端口。
+
+**需要继续分享时：** 保持 App 运行，打开可访问的[在线版或已有站点](./getting-started.zh-CN.md#使用已有站点分享)，
+点击顶部的 **App** 完成授权，即可继续使用 App 的窗口／屏幕采集，无需创建临时公网邀请。
+在线版仍使用 P2P；网页能打开但画面连不上时，转到[画面连接排查](#画面连接不上)。
 反馈中请附上 App 版本、失败时间和 [App 诊断报告](../../cmd/piik-app/README.zh-CN.md#诊断)。
 如果打不开的是自建站点而非 App 的临时地址，请联系该站点管理员检查服务。
 
@@ -227,6 +241,9 @@ STUN 帮助设备发现用于直连的地址，不负责转发画面。STUN 服�
 也可能出现聊天正常、媒体连不上的情况。App 公网邀请已使用多个发现服务，
 单个 STUN 报错不代表全部线路失败。自部署管理员应检查 `STUN_URLS`
 是否指向可达的 UDP 服务；HTTP 反向代理不能转发 STUN。
+App 用户需要更换服务商时，可在启动公网邀请前设置
+[`PIIK_STUN_URLS`](../standards/configuration.md#piik-app-configuration)，
+替换所有内置发现地址。请选择信任的服务，因为 STUN 会接收到参与者的公网 IP。
 请结合双方同一次尝试的诊断报告判断原因。
 
 可以依次尝试，画面恢复后就不必继续：

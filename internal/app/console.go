@@ -30,6 +30,7 @@ type consoleView struct {
 }
 
 type consoleLanguage string
+type consoleLauncher string
 type consoleFinished struct{ err error }
 type consoleTick struct{}
 type consoleIdleWink struct{}
@@ -54,6 +55,7 @@ type consoleResult struct {
 
 type consoleModel struct {
 	view        consoleView
+	launcher    string
 	language    string
 	width       int
 	height      int
@@ -94,6 +96,7 @@ var consoleCopy = map[string][3]string{
 	"stopped":      {"Stopped", "已停止", "○"},
 	"failed":       {"Could not continue", "运行失败", "!"},
 	"entry":        {"Open in browser", "打开网页", "□"},
+	"launcher":     {"App launcher", "App 启动页", "☆"},
 	"invite":       {"Site address", "站点地址", "↗"},
 	"access":       {"Site access", "站点准入", ""},
 	"open":         {"Open", "开放", "○"},
@@ -224,6 +227,8 @@ func (model consoleModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case consoleLanguage:
 		model.language = string(value)
+	case consoleLauncher:
+		model.launcher = string(value)
 	case consoleDiagnostic:
 		model.view.problem = string(value)
 		model.view.browserError = nil
@@ -255,7 +260,7 @@ func (model consoleModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case consoleFinished:
 		model.finished = true
-		model.view.entry, model.view.invite = "", ""
+		model.view.entry, model.view.invite, model.launcher = "", "", ""
 		model.view.browserError = nil
 		model.view.state, model.view.problem = "stopped", ""
 		if value.err != nil {
@@ -266,6 +271,7 @@ func (model consoleModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		switch value.String() {
 		case "q", "ctrl+c":
 			model.view = consoleView{mode: model.view.mode, state: "stopping"}
+			model.launcher = ""
 			model.cancel()
 		case "o", "O":
 			if target := model.view.entry; target != "" && model.openBrowser != nil {
@@ -377,8 +383,8 @@ func (model consoleModel) content(styled bool) string {
 			fmt.Fprintf(&out, "%s  %s\n", muted.Render(model.text("mode")), model.text(model.view.mode))
 		}
 	}
-	for _, item := range [][2]string{{"entry", model.view.entry}, {"invite", model.view.invite}} {
-		if item[1] == "" || compact && item[0] == "invite" {
+	for _, item := range [][2]string{{"entry", model.view.entry}, {"launcher", model.launcher}, {"invite", model.view.invite}} {
+		if item[1] == "" || compact && item[0] == "invite" || item[0] == "launcher" && item[1] == model.view.entry {
 			continue
 		}
 		address := consoleAddress(item[1])
@@ -505,6 +511,8 @@ func consoleVisualToken(key string) string {
 		return "*"
 	case "entry":
 		return "□"
+	case "launcher":
+		return "☆"
 	case "invite":
 		return "↗"
 	case "exit":

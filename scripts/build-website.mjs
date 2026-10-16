@@ -24,6 +24,11 @@ await cp(source, output, {
     !path.endsWith("README.md"),
 });
 await cp(new URL("../LICENSE", import.meta.url), new URL("LICENSE", output));
+// App, website and reader guides share the same brand artwork and raster exports.
+for (const name of ["favicon.svg", "favicon.png", "favicon.ico"]) {
+  await cp(new URL(`../public/${name}`, import.meta.url),
+    new URL(name.endsWith(".ico") ? name : `assets/${name}`, output));
+}
 const [{ locales }, { Glyph }] = await Promise.all([
   "../src/client/locales/index.ts",
   "../src/client/ui/icons.tsx",
@@ -35,7 +40,14 @@ const [{ locales }, { Glyph }] = await Promise.all([
 const welcomePools = [locales.en, locales.zh].map(locale => locale.playful.welcome.map(({ text }) =>
   renderToStaticMarkup(createElement("span", { lang: locale.tag }, `“${text}”`))));
 const homepage = (await readFile(new URL("index.html", source), "utf8"))
-  .replace(/<p id="welcome-line">.*?<\/p>/, `<p id="welcome-line">${welcomePools.map(pool => pool[0] ?? "").join("")}</p>`);
+  .replace(/<p id="welcome-line">.*?<\/p>/, `<p id="welcome-line">${welcomePools.map(pool => pool[0] ?? "").join("")}</p>`)
+  // Reuse the product's icon and copy owners without a React runtime on the homepage.
+  .replace(/<template id="theme-(light|dark)"><\/template>/g, (_, target) =>
+    `<template id="theme-${target}">` +
+    renderToStaticMarkup(createElement(Glyph, { name: target === "light" ? "sun" : "moon", size: 16, draw: "theme-toggle" })) +
+    [locales.en, locales.zh].map(locale => renderToStaticMarkup(createElement("span", {
+      className: "lr-cap", lang: locale.tag, "data-label": locale.copy[`theme.${target}`],
+    }, locale.copy[`theme.${target}.short`]))).join("") + '</template>');
 await writeFile(new URL("index.html", output), homepage.replace(
   '</body>', `<template id="welcome-lines">${welcomePools.flat().join('')}</template></body>`,
 ));
