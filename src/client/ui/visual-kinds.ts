@@ -105,6 +105,9 @@ export type Set4Kind =
   | "hint-client-site";
 
 export type PlaybackHintKind =
+  | "hint-fit-contain"
+  | "hint-fit-cover"
+  | "hint-fit-fill"
   | "hint-local-play"
   | "hint-local-pause"
   | "hint-volume"
@@ -144,13 +147,22 @@ export type MetricHintKind = `hint-metric-${
 }`;
 
 export type InteractionHintKind =
+  | "hint-reaction-picker"
   | "hint-chat-open"
   | "hint-chat-send"
   | "hint-chat-settings"
   | "hint-chat-export"
-  | "hint-chat-detach"
+  | "hint-window-detach"
   | "hint-chat-overlay-show"
   | "hint-chat-overlay-hide";
+
+export type RemoteHintKind =
+  | "hint-remote-keyboard"
+  | "hint-key-combination"
+  | "hint-remote-control"
+  | "hint-remote-stop"
+  | "hint-remote-mouse-lock"
+  | "hint-remote-mouse-release";
 
 export type HintKind =
   | Set1Kind
@@ -161,6 +173,7 @@ export type HintKind =
   | PlaybackHintKind
   | MetricHintKind
   | InteractionHintKind
+  | RemoteHintKind
   | ControlHintKind;
 
 export type ComicTheme = "stage" | "paper";

@@ -11,6 +11,7 @@ import { NativeSenderPeer } from "../src/client/native/native-sender-peer";
 import { NativeCompatibilityError, NativeRequestError } from "../src/client/native/client";
 import { nativeCaptureTargetKey } from "../src/client/native/capture-selection";
 import { NativeMediaBridgeError } from "../src/client/native/media-bridge";
+import { InputRoute } from "../src/client/remote-control/input-route";
 import { reconcileBoundedMediaChildren } from "../src/client/webrtc/media-assignment";
 import { debugError, debugEvent, debugOperation } from "../src/client/lib/debug";
 import { ApiError } from "../src/client/lib/api";
@@ -96,18 +97,20 @@ function fixture(launchedByClient = true) {
     appQualityPreferenceRef: ref<{ save: (quality: QualitySettings) => void } | null>(null),
     qualityPreferenceEditedRef: ref(false), pendingAppQualityPreferenceRef: ref<QualitySettings | null>(null),
     activeGenerationRef: ref<number | null>(1), streamRef: ref<typeof stream | null>(stream), sourceSwitchRef: ref<object | null>(null),
-    nativeSourceAudioRef: ref<boolean | undefined>(undefined), setMicrophoneEnabled: vi.fn(),
+    nativeSourceAudioRef: ref<boolean | undefined>(undefined), audioAvailableRef: ref(false), setMicrophoneEnabled: vi.fn(),
     microphoneVoiceProcessing: true, setMicrophoneVoiceProcessing: vi.fn(),
     nativeSourceSelectionRef: ref<Record<string, unknown> | null>(null), nativeCaptureTargetKey,
     nativeModeRef: ref(false), nativeClientRef: ref<typeof client | null>(client), nativeShareGenerationRef: ref<string | null>("share"),
     hostAudioRef: ref<{ sourceStream: MediaStream } | null>(null),
     nativeMediaIngressRef: ref<ReturnType<typeof ingress> | null>(null), nativeMediaBridgeRef: ref(null),
+    nativeInputRoute: new InputRoute(() => {}),
     nativeEventCleanupRef: ref(null), nativeShareCleanupRef: ref(Promise.resolve()),
     peersRef: ref(new Map([["viewer", peer]])), hostProvisionalChildRef: ref(null), hostSfuRouteRef: ref(route),
-    signalRef: ref({ setHostQualitySettings: vi.fn(), send: vi.fn() }),
+    signalRef: ref({ setHostQualitySettings: vi.fn(), setAudioAvailable: vi.fn(), send: vi.fn() }),
     setQualitySettings: vi.fn(), setAdvancedQuality: vi.fn(), setChangingQuality: vi.fn(), savePreferredQuality: vi.fn(),
     setNoticeValue: vi.fn(), setNoticeError: vi.fn(), readableError: hostActionErrorNotice,
-    setDetails: vi.fn(), setNativeActive: vi.fn(),
+    setDetails: vi.fn(), setNativeActive: vi.fn(), setRemoteControlState: vi.fn(),
+    remoteInputPeersRef: ref([]), getRuntimeCapabilities: vi.fn(async () => ({ remoteInput: false })),
     applyCaptureProfile: vi.fn(async (_stream: unknown, profile: QualitySettings) => { physical = profile; }),
     captureDetails: () => ({}),
     qualitySettingsEqual, qualityResolutionEqual, videoQualitySettingsEqual, screenAudioBitrate, qualitySettingsLabel,
@@ -232,6 +235,8 @@ describe("Host room ownership", () => {
       interactions = {};
       stop = vi.fn();
       stopSharing = vi.fn();
+      setAudioAvailable = vi.fn();
+      enableRoomInteractions = vi.fn(() => this.interactions);
       constructor(public identity: { roomId: string; token: string; roomOnly?: true; shareGeneration?: string },
         public events: {
           onMessage(message: unknown): void;
@@ -246,7 +251,7 @@ describe("Host room ownership", () => {
     Object.assign(current.signalRef, { current: null });
     current.generationRef.current = 1;
     Object.assign(current.context, {
-      SignalingClient: Signal, hostRoomSessionAvailable: true, roomInteractionsAvailable: true,
+      SignalingClient: Signal, hostRoomSessionAvailable: true, roomInteractionsAvailable: true, roomReactionIds: undefined,
       visRef: ref(false), hostClientIdRef: ref(null), displayNameRef: ref("Host"),
       getStableClientId: () => "host-client", defaultHostDisplayName: () => "Host", readDisplayName: () => "Host",
       setDisplayName: vi.fn(), setDisplayNameDraft: vi.fn(), setDisplayNameError: vi.fn(),
@@ -1292,7 +1297,7 @@ describe("Host quality ownership", () => {
     const setResolvedVideoCodec = vi.fn();
     Object.assign(current.context, {
       phase: "idle", captureBrowserSource: async () => captured,
-      HostAudio: class {}, setStream: vi.fn(), watchCaptureEnd: vi.fn(),
+      HostAudio: class { audioAvailable = false; }, setStream: vi.fn(), watchCaptureEnd: vi.fn(),
       resolveStreamVideoCodec, startBrowserNativeIngress, setResolvedVideoCodec,
     });
     current.disposeResources.mockImplementation(() => {

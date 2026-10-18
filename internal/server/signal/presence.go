@@ -148,6 +148,7 @@ func (s *Server) handleDisconnect(sess *session) {
 		return
 	}
 	s.router.disconnectParticipant(disconnected.RoomID, disconnected.PeerID, sess.sessionID)
+	s.sendRemoteInputPeers(disconnected.RoomID)
 	if disconnected.Role == protocol.RoleHost {
 		s.broadcastHostStatus(disconnected.RoomID, false, false)
 		s.sendViewerPresence(disconnected.RoomID)
@@ -182,6 +183,7 @@ func (s *Server) stopSharing(roomID string) {
 	if current, ok := s.shares[roomID]; ok {
 		s.shares[roomID] = roomShare{generation: current.generation}
 	}
+	s.broadcastAudioPresence(roomID)
 	s.clearRoomViewerEvidence(roomID)
 	s.router.stopRoom(roomID)
 	for _, viewer := range s.store.GetConnectedViewers(roomID) {
