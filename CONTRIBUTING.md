@@ -180,11 +180,14 @@ reserve `spike/` for experiments. No issue number is required. 中文说明：PR
 A pull request should explain the problem, the chosen design, verification performed, user-visible or operational effects, and remaining risks.
 
 Before a product-changing integration PR is accepted, fill its exact `## Release notes` section
-with concise public copy in Chinese and English: user-visible changes, fixes and
-required upgrade actions. Use `###` for subsections. Review this text as product
+with concise public copy in English followed by Chinese: user-visible changes,
+fixes and required upgrade actions. Use `###` for subsections. Review this text as product
 copy; it is published automatically from the squash commit, without PR discussion
 or verification logs. The [release-note policy](./docs/standards/versioning.md#release-notes)
-owns aggregation and preview. Do not add a changelog file or release-note archive.
+owns the optional editorial headline, aggregation and preview. Review the
+generated whole release and its website excerpt together before publication;
+keep at most one bilingual theme and make this update's actual changes easy to find.
+Do not add a changelog file or release-note archive.
 Standalone website, documentation and maintenance phases do not need product
 release notes; their public description stays in the PR.
 
