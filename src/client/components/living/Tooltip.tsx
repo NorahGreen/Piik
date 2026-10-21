@@ -33,13 +33,13 @@ import { replaySvgAnimations } from "../../ui/animation";
 import { useSurfaceDocument } from "../../ui/panel-window";
 import { comicStyle, getComicPresentation, type ComicTone, type ComicMotion } from "./comic-presentation";
 
-const LONG_PRESS_MS = 500;
+export const LONG_PRESS_MS = 500;
 const TOUCH_HIDE_MS = 1500;
 const PANEL_EXIT_MS = 160;
-const HOVER_ENTER_MS = 500;
+export const HOVER_ENTER_MS = 500;
 // Minimum clearance the re-picked alignment keeps to each viewport edge.
 const EDGE_MARGIN = 8;
-const HOVER_EXIT_GRACE_MS = 160;
+export const HOVER_EXIT_GRACE_MS = 160;
 // Paper panel before its mounted content is measured.
 const FALLBACK_PANEL_HEIGHT = 96;
 
@@ -123,21 +123,26 @@ export function Tooltip({
 
   useLayoutEffect(() => {
     const element = overflow ? wrapRef.current?.querySelector<HTMLElement>(overflow.selector) : null;
-    if (!element || !overflow) {
+    const view = element?.ownerDocument.defaultView;
+    if (!element || !overflow || !view) {
       setOverflowing(false);
       return;
     }
-    let disposed = false;
+    let disposed = false, frame = 0;
     const measure = () => {
       // SVG topology labels are shortened before rendering; HTML names use CSS.
       if (!disposed) setOverflowing(element.textContent !== overflow.text || element.scrollWidth > element.clientWidth);
     };
     measure();
-    const observer = new ResizeObserver(measure);
+    // A clipped label can change its focus wrapper; measure outside resize delivery.
+    const observer = new ResizeObserver(() => {
+      view.cancelAnimationFrame(frame);
+      frame = view.requestAnimationFrame(measure);
+    });
     observer.observe(element);
     // Font loading can change scrollWidth without changing the clipped box.
     void element.ownerDocument.fonts?.ready.then(measure);
-    return () => { disposed = true; observer.disconnect(); };
+    return () => { disposed = true; observer.disconnect(); view.cancelAnimationFrame(frame); };
   }, [overflow?.selector, overflow?.text, trigger?.type, trigger?.key, ownerDocument]);
 
   useLayoutEffect(() => {

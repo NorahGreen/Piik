@@ -1,9 +1,9 @@
 # Current Status
 
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 
 This is the compact execution/deployment index. Product modules own behavior,
-[verification status](./verification-status.md) owns unresolved physical limits,
+[verification status](./verification-status.md) summarizes material evidence limits,
 and Git/PRs own completed history.
 
 ## Accepted Release Contract
@@ -27,11 +27,11 @@ and Git/PRs own completed history.
   mascot, concrete media waits use their owning comic, and waiting captions are
   secondary to literal status. Website reduced-motion preference and player
   tooltip placement follow the same presentation owners.
-- Camera sharing and Host microphone commentary are accepted product features.
-  Both Browser and native App audio use the existing media routes; device
-  selection and sharing settings keep their current resource owners. The
+- Camera sharing and room voice are accepted product features. Source audio
+  follows the picture; room voice owns Host and Viewer microphones under the
+  same route controller. Device selection and sharing settings keep their owners. The
   [capture assessment](./research/camera-and-microphone.md) owns platform behavior
-  and the remaining physical evidence limits.
+  and platform limits.
 
 Website delivery includes a bilingual reader documentation center generated
 from the repository's guides alongside the homepage, with search and detailed
@@ -46,11 +46,10 @@ panel. Its opted-in room session can outlive a publication; capture, quality and
 route owners remain unchanged. Optional Windows screen-audio exclusion uses the
 existing source/mixer boundary. Hosted Server
 also accepts an optional SFU-only policy through the same route controller.
-Windows native capture and thumbnails now share automatic HDR-to-SDR conversion;
-synthetic GPU and Browser reception checks pass, with physical HDR display
-acceptance still pending in [verification status](./verification-status.md).
-Room voice is outside this published phase; Host microphone commentary remains.
-These features are published; physical device limits remain open.
+Windows native capture and thumbnails share automatic HDR-to-SDR conversion.
+The [fidelity assessment](./research/media-fidelity.md#hdr-to-sdr) owns its evidence
+and the distinction from Browser capture and end-to-end HDR.
+Room voice supplies Host and Viewer speech separately from source audio.
 Release artifacts and operator deployment records own delivery completion;
 [TODO](./todo.md#now) owns remaining work.
 
@@ -60,16 +59,26 @@ The current 2.x release line retains attended keyboard/mouse control, Viewer
 playback settings and the interaction window, with the maintenance media and lifecycle
 repairs. The accepted maintenance phase preserves the published protocols and
 route owners; release artifacts and operator records establish publication and
-postflight completion. Current implementation work turns to room-owned routing
-and voice in the isolated prototype, while device/reporter follow-up remains in
-the TODO ledger. The promotional film remains an online-review draft; export
-follows owner acceptance.
-Separate local prototypes assess room voice and shared-keyboard/virtual-gamepad
-co-play. A room-owned tree experiment now reuses the existing route controller
-for bidirectional voice and video on shared Pion connections. Local media-owner
-experiments do not establish public App-hosted voice;
-neither prototype changes the published feature or protocol boundary.
-[TODO](./todo.md) owns upstream follow-up, device acceptance and deferred work;
+postflight completion. Room voice integrates normal App/Server/Web, with the same
+room graph and serial route operation, separate picture and voice lifetimes, explicit pre-share room creation
+and Host-owned room voice activation. Normal Browser checks cover a three-participant Peer
+relay and embedded SFU, duplex audio, local-mute isolation, picture replacement,
+detached UI and capture retirement. Optional voluntary Peer fanout and local
+picture rotation are included; frp uses the documented existing UDP configuration.
+Windows x64 Server packaging uses the existing
+release inventory; Docker images remain Linux-only.
+App Local invitations now use HTTPS on the selected LAN address; the Host keeps
+its loopback entry. Hosted Server also supports optional direct HTTPS with a
+temporary local certificate or supplied certificate files. Both use the same
+room authority and require the browser to accept the certificate.
+Channel availability derives from Host membership and uses one
+room microphone for Host and Viewers. Local normal-page acceptance covers both
+P2P and SFU, independent listening, picture continuity and voice-facet recovery.
+Controlled-network voice cases and platform package checks have passed; the
+release artifacts and operator records establish publication and deployment.
+Separate shared-keyboard/virtual-gamepad experiments remain prototypes.
+The promotional film stays an online-review draft; export follows owner acceptance.
+[TODO](./todo.md) owns unfinished work and explicit deferrals;
 release artifacts and operator records own exact delivery results.
 
 2.0 separates numeric media requests from presets and bounded runtime admission,
@@ -87,10 +96,8 @@ Magicsock remains excluded: its [controlled comparison](./research/nat-traversal
 established no additional reachability worth its integration costs.
 
 The [media assessment](./research/native-client-media.md#media-capability-extension-assessment)
-owns bounded output and live-control evidence. Physical macOS/Linux capture,
-limited decoders and sustained game/4K use retain the limits in
-[verification status](./verification-status.md). Additional codecs, room voice,
-surround delivery and end-to-end HDR remain outside this phase.
+owns bounded output and live-control evidence. Additional codecs, surround
+delivery and end-to-end HDR remain outside the published phase.
 
 2.0 was published after final acceptance without a separate field beta.
 Immutable release artifacts and operator records own exact delivery
@@ -119,7 +126,7 @@ HTTPS, runtime assets, all three STUN listeners and a bounded browser P2P
 sharing/stop check passed; the browser check used synthetic video on one network.
 The operator record owns exact identity and postflight evidence.
 
-[TODO](./todo.md) owns remaining verification and follow-up work. The owner declared the first
+[TODO](./todo.md) owns unfinished work. The owner declared the first
 public release on 2026-09-12. Source is public, main protection is active, and
 `piik.tv` runs on GitHub Pages behind Cloudflare with HTTPS. The private service
 remains a separate deployment. Release descriptors and GitHub deployment records
@@ -135,7 +142,7 @@ product changes publish automatically; standalone website and documentation
 changes validate and deploy the website without creating App/Server versions.
 GitHub/Gitee release comparison, mirror publishing and PR-sourced notes follow
 [versioning](./standards/versioning.md). [Verification status](./verification-status.md#device-evidence-boundary)
-owns the remaining physical limits; shared lessons live in
+summarizes material evidence limits; shared lessons live in
 [engineering](./standards/engineering.md).
 
 ## Media Evidence And Limits
@@ -167,8 +174,6 @@ owns the remaining physical limits; shared lessons live in
   owns these measurements and failed controls. The owner accepted this scoped
   Browser composition for release; actual deployment identity stays in the
   runtime descriptor.
-- Slow adaptation recovery, the extreme CPU-overload sampling limit and missing
-  broad device/network/endurance results remain explicit in
-  [encoder research](./research/webrtc-encoder-pool.md) and verification status.
-  macOS/Linux physical capture is deferred by the owner; Windows App and
-  Browser are this phase's primary targets.
+- Browser-controlled recovery and extreme CPU-overload limits remain in
+  [encoder research](./research/webrtc-encoder-pool.md). Windows App and Browser
+  are this phase's primary targets; macOS/Linux physical capture remains deferred.

@@ -13,7 +13,8 @@ owns room/publication lifetime.
 | Concern | Owner | Lifetime |
 | --- | --- | --- |
 | Identity, room membership and access | Existing room store and authenticated signaling session | Current admitted participant |
-| Screen/camera plus Host commentary | Existing capture and media owners | Current share and source |
+| Screen/camera and source sound | Existing capture and media owners | Current share and source |
+| Room microphone and listening | `RoomVoiceSession`, Browser input and room-route adapters | Explicit voice membership, independent of picture sharing |
 | Text and reactions | `signal/interactions.go`, shared protocol and `RoomInteractionSession` | Current authenticated room session; bounded page-local presentation |
 | Chat panel, optional chat overlay and reaction placement | Shared `RoomInteractions` and `RoomChatOverlay`; `RoomInteractionSession` owns bounded events | Current room UI |
 
@@ -119,7 +120,7 @@ confirmation without locking draft editing or introducing a message queue.
 The conversation entry shares the couch footer with its participant count,
 separate from the Host's sharing controls. Theater hides the seating and count,
 retaining the same compact conversation entry and focus target.
-Selecting a person opens the compact reaction palette in the shared floating
+Selecting a person on the couch opens the reaction palette in the shared floating
 shell, initially beside the selected person (below when space permits). Each
 opening anchors there before allowing free movement. Its portrait and name identify the
 target even after moving the window. Selecting a different participant keeps its
@@ -128,20 +129,24 @@ The default palette height follows its content, bounded by the visible viewport.
 One's own palette expresses a reaction above oneself and holds the local effects switch; other
 people's palettes offer targeted expressions and two throwing props. The props form
 a compact pair of named action buttons beneath the expression grid, using the
-shared button motion. The same palette serves both the couch and conversation.
+shared button motion.
 Connection details remain secondary when that participant has inspectable data.
 Close or Escape dismisses the palette; it also closes if its participant leaves.
 Sending keeps it open for repeated interaction, with the existing short cooldown.
 Confirmation never changes menu visibility; failure stays visible in the card.
 Opening or closing a reaction card preserves the chat draft and unread state.
-The interaction window keeps one composer with an on-demand reaction tray.
-Its recipient strip uses the same room identities and the couch's shared palette.
-The tray shortens the scrollable message list rather than covering messages;
-the input and reading position stay in place. Its composer button or a current
-participant's message avatar opens it and focuses the selected person; Escape
-returns to that opener. Avatars of departed participants remain non-interactive.
-Typing or pressing Escape dismisses the tray; sending a reaction keeps it open.
-While it is closed, the newest live reaction briefly shows its sender and recipient
+The interaction window uses a compact attached palette beside the chosen chat
+or voice avatar, without replacing or compressing the list and composer. Its
+quick actions are thumbs up/down and the two throwing props; one's own entry
+substitutes laugh and heart. More reactions exposes the full curated palette,
+with a labelled back arrow in its heading. The native
+popover and shared anchored placement own dismissal, focus and viewport fit.
+Clicking the input dismisses it and continues typing; sending keeps it open.
+Changing pages or moving the tool between documents dismisses this brief menu
+without changing the session, draft or reading position. Avatars of departed
+participants remain non-interactive. Both menus use the same target heading,
+reaction buttons and send owner.
+The newest live reaction briefly shows its sender and recipient
 with the same animation renderer.
 It adds neither a message history entry nor an independent expiry timer. Member
 controls and reactions open on demand within the small companion window. Only
@@ -252,6 +257,32 @@ Text, reactions and danmaku introduce no microphone capture or additional media
 peers. Room voice is an isolated prototype, not a published capability.
 
 ### Room Voice Transport Assessment
+
+Integration update, 2026-10-20: the normal App/Server/Web candidate now uses one
+room controller for voice and picture, with companion Browser audio connections
+on its selected edges and an embedded Opus SFU adapter on the existing UDP mux.
+The earlier experiments below remain design evidence, not the distributable
+implementation. Room voice now opens when the Host joins and closes when the
+Host leaves. Room admission replaces per-person voice permissions. All current
+microphone controls use room voice; pausing local listening leaves the microphone
+on. Source sound stays with the picture. This follows the independent media
+source model in [LiveKit](https://docs.livekit.io/intro/basics/rooms-participants-tracks/)
+and the [RTP synchronization boundary](https://www.rfc-editor.org/rfc/rfc8834.html#section-12.2.3):
+sharing a route does not guarantee synchronized playback across independent
+voice and picture connections. Conversation prioritizes timely delivery.
+Normal UI checks exercise pre-share room creation, channel activation,
+duplex capture, a three-participant Peer relay, local mute without interrupting
+forwarding, picture start/stop/restart, detach and authority retirement on P2P
+and forced-SFU arms. The existing network laboratory also exercises voice across
+Browser/App endpoint combinations, blocked direct paths and UDP interruption.
+These synthetic-device checks do not establish microphone echo behavior, public
+NAT success rates or 21-person all-speaking audio capacity.
+`PIIK_ROOM_VOICE_LEGACY_WEB` optionally points the same normal-page gate at an
+older checkout and records its revision, checking that an older Viewer retains
+picture playback without subscribing to voice events.
+Product owners are [room voice](../standards/rooms-access.md#room-voice) and
+[room media](../standards/routing-transport.md#room-media); the public release
+does not yet include this candidate.
 
 Reviewed 2026-10-19. The owner requested optional self-hosted voice and assessment
 of App-hosted voice. The local prototype forwards independent Opus publications,
@@ -485,8 +516,10 @@ and the platform [AES-GCM API](https://developer.mozilla.org/en-US/docs/Web/API/
 sessions share the same physical keyboard and pointer. Remote control starts
 off. The Browser remembers the last successfully applied authorization mode;
 the Host must still enable it manually for each new shared source. Ask each time
-is the default. A remembered password mode asks for a new password before
-applying; the password itself is never remembered. Automatic modes accept only
+is the default. Remembered Room Viewers mode opens the existing permission form
+and needs an explicit allow action before becoming active for the new audience.
+A remembered password mode asks for a new password before applying; the password
+itself is never remembered. Automatic modes accept only
 authenticated room Viewers and never displace an active controller. Permission
 belongs to the current shared source; changing sources or stopping turns it off.
 Turning it off also clears pending requests and releases held input, including
@@ -518,8 +551,22 @@ the recovered path carries a fresh request. App playback and relay descendants
 follow the same rule; interruption releases the upstream grant.
 A closed control channel needs a new media
 connection; neither path silently restores a grant. Either side can end control
-from its page. Windows also supplies a local Ctrl+Alt+F10 stop shortcut; macOS
-uses Control+Option+F10. Linux retains the desktop's sharing controls instead
+from its page. Windows also supplies a local Ctrl+Alt+F10 stop shortcut by default;
+macOS uses Control+Option+F10. The Host can change the function key in the control
+panel; the current Site's Browser storage owns this preference and reapplies it
+before enabling control. App keeps only the running binding, with no shortcut
+configuration file. Configuration probes availability;
+registration lasts only while at least one native session enables control,
+never merely because App is running. An occupied key fails that operation
+without disabling capture or the input backend. Replacing
+the shortcut retains the old binding until registration succeeds; only a
+successful change is saved in the Browser. Each Site has its own preference.
+Viewers independently choose their page-local exit shortcut in the remote
+keyboard; it also works in a detached keyboard window and saves in that Browser.
+Both selectors offer F1–F11 with fixed Ctrl+Alt/Option modifiers;
+[Windows reserves F12](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey#remarks).
+The optional App discovery capability gates the new commands, preserving the
+published permission and input-state messages. Linux retains the desktop's sharing controls instead
 of registering a second global key grab. A Host stop (including that local shortcut) also resets automatic
 permission to Ask each time. A Viewer ending their own control leaves the Host's
 policy in place. This adds no service, automatic sharing or control across App

@@ -14,23 +14,26 @@ participants' capture and encoding work.
 
 ## Try it locally
 
-These instructions support Linux x64 and ARM64.
+Server packages are available for Linux x64/ARM64 and Windows x64.
 
 Download the Server archive matching your machine
 from [GitHub Releases](https://github.com/TNTcraftHIM/Piik/releases)
 or the [Gitee mirror](https://gitee.com/TNTcraftHIM/Piik/releases).
-Use `uname -m` to check the architecture:
+On Linux, use `uname -m` to check the architecture:
 
-| Architecture | Archive |
+| Platform | Archive |
 | --- | --- |
-| `x86_64` (x64) | `piik-<revision>-runtime.tar.gz` |
-| `aarch64` (ARM64) | `piik-<revision>-linux-arm64-runtime.tar.gz` |
+| Linux `x86_64` (x64) | `piik-<revision>-runtime.tar.gz` |
+| Linux `aarch64` (ARM64) | `piik-<revision>-linux-arm64-runtime.tar.gz` |
+| Windows x64 | `piik-<revision>-windows-amd64-runtime.zip` |
 
-Extract it and run the following in its directory:
+Extract it and run the following in its directory on Linux:
 
 ```sh
 ./piik-server
 ```
+
+On Windows, open PowerShell in the extracted directory and run `./piik-server.exe`.
 
 Open `http://localhost:8787`. This is a local trial; use the configuration below
 to let friends connect over the internet. To start a temporary room on your computer,
@@ -60,9 +63,47 @@ the sample `.env` also shows how to enable SFU fallback. Keep the `piik-data`
 volume, which stores room data and optional diagnostics. See
 [container maintenance](./service-management.md#container) for updates and backups.
 
+## Private LAN without a domain
+
+For a NAS, home server or virtual LAN, Piik can serve HTTPS directly. Save the
+following as `.env` beside the server binary, replacing every `192.168.1.10`
+with the server's address on that network:
+
+```dotenv
+PIIK_ENV=production
+LISTEN_HOST=0.0.0.0
+PORT=8787
+PUBLIC_BASE_URL=https://192.168.1.10:8787
+TLS_SELF_SIGNED=true
+STUN_URLS=stun:192.168.1.10:3478
+```
+
+From that directory, run `./piik-server --check-config`, then `./piik-server`
+(use `.exe` on Windows).
+Allow TCP 8787 and UDP 3478 on that network. Open the **HTTPS** address on each
+device; no public IP, domain or reverse proxy is needed. With Docker Compose,
+also change the web port mapping from `127.0.0.1:8787:8787/tcp` to
+`8787:8787/tcp` so LAN devices can reach it.
+
+The browser will warn about the self-signed certificate. Compare its SHA-256
+fingerprint with the server's **HTTPS certificate** startup message before
+continuing; see [local certificate confirmation](../guide/troubleshooting.md#local-https-certificate-warning).
+The certificate stays in memory and changes when Piik restarts, so confirm the
+new one after a restart. Browser microphone, camera and remote control still
+require their ordinary permissions and supported APIs.
+
+To keep your own certificate, turn off `TLS_SELF_SIGNED` and set both
+`TLS_CERT_FILE` and `TLS_KEY_FILE` to its PEM files. With Docker, mount those
+files read-only and use their paths inside the container. The certificate must cover
+the host in `PUBLIC_BASE_URL`. `--check-config` checks the pair and validity;
+restart Piik after replacing the files. Piik does not obtain or renew these
+certificates. For a long-running public site, use the automatic HTTPS proxy below.
+If the web port is occupied, stop the conflicting service or change both `PORT`
+and the port in `PUBLIC_BASE_URL`, then send new invitations.
+
 ## Put it online
 
-You need a Linux x64 or ARM64 server and a domain pointing to its public IP.
+You need a supported server and a domain pointing to its public IP.
 The example uses `share.example.com`; replace it with your domain.
 
 ### 1. Configure and start Piik
@@ -84,6 +125,9 @@ Run these commands from that directory as a regular user:
 ./piik-server --check-config
 ./piik-server
 ```
+
+On Windows, use `./piik-server.exe --check-config` and `./piik-server.exe` in
+PowerShell. The same `.env` file and ports apply.
 
 The server reads `.env` automatically and stores rooms in `rooms.sqlite` in the
 working directory. A blank `SITE_ACCESS_PASSWORD` allows
@@ -155,9 +199,75 @@ To send every room through your server, also set `SFU_ONLY=true` and restart.
 The sharing settings will show **Server media**. Plan server bandwidth for every
 Viewer; this mode does not fall back to P2P if the server route fails.
 
+## Optional: forward an existing server with frp
+
+If Piik runs behind NAT and you control a public frps host, frp can forward its
+existing web and SFU endpoints. P2P ICE discovery remains unchanged.
+
+Run the [HTTPS proxy above](#2-enable-https) on the public host, keeping its
+WebSocket-capable upstream at `127.0.0.1:8787`. Point `share.example.com` and
+`relay.example.com` to that host. Open TCP 7000 for frpc and UDP 7882 for media,
+alongside TCP 80/443; keep the forwarded TCP 8787 private to the HTTPS proxy.
+
+On the public host, configure `frps.toml`:
+
+```toml
+bindPort = 7000
+auth.token = "{{ .Envs.FRP_TOKEN }}"
+transport.tls.force = true
+allowPorts = [{ single = 8787 }, { single = 7882 }]
+```
+
+On the Piik machine, copy [frpc.toml.example](../../deploy/frp/frpc.toml.example)
+to `frpc.toml` and replace `relay.example.com`. Inject the same private, nonempty
+`FRP_TOKEN` into both frp process environments. Validate each file with
+`frps verify -c frps.toml` / `frpc verify -c frpc.toml`, then start each process
+with `-c` and its file. See [frp configuration](https://gofrp.org/en/docs/features/common/configure/)
+and [TCP/UDP forwarding](https://gofrp.org/en/docs/features/tcp-udp/).
+
+Keep Piik's `LISTEN_HOST=127.0.0.1` and update its `.env`:
+
+```dotenv
+PUBLIC_BASE_URL=https://share.example.com
+STUN_URLS=stun:stun.direct.example.com:3478
+SFU_UDP_PORT=7882
+SFU_PUBLIC_IP=203.0.113.10
+```
+
+Replace the example IPv4 with the public frps address and the STUN hostname with
+a directly reachable STUN service. The frpc local and remote UDP ports must both
+equal `SFU_UDP_PORT`. Do not forward Piik's STUN ports through frp: its UDP proxy
+[changes the source mapping](../research/nat-traversal.md#external-forwarding-and-participant-relays)
+STUN would report. Restart Piik and check HTTPS health, room access and
+**Server media** from another network.
+
+### Using a managed frp provider
+
+Services such as SakuraFrp supply the public server and their own client or
+launcher. Follow the provider's setup instead of copying the private frps token
+configuration above. Check that the chosen node supports both HTTPS web access
+with WebSockets and an ordinary UDP tunnel.
+
+| Endpoint | Local target | Piik setting |
+| --- | --- | --- |
+| Web | `127.0.0.1:8787`, with HTTPS supplied by your proxy or provider | Set `PUBLIC_BASE_URL` to the actual public HTTPS address, including any port. |
+| Media | `127.0.0.1:<assigned UDP port>` | Set `SFU_UDP_PORT` to that same local/public port and `SFU_PUBLIC_IP` to the UDP node's public IPv4. |
+
+For example, if the provider assigns UDP port `30000`, use `30000` for both
+tunnel ports and Piik's `SFU_UDP_PORT`; the web port can remain `8787` locally.
+Keep STUN directly reachable as above. A web-only tunnel carries signaling but
+does not add an SFU media route for strict NAT.
+
+See SakuraFrp's [web setup](https://doc.natfrp.com/app/http.html) and
+[UDP connectivity notes](https://doc.natfrp.com/faq/network.html). Node features,
+access requirements and bandwidth depend on the provider; Piik has not yet
+field-tested this managed service.
+
 ## Keep it running and update
 
-For automatic startup, use the [systemd or container guide](./service-management.md).
+On Linux, use the [systemd or container guide](./service-management.md) for automatic
+startup. On Windows, run the executable under your existing service manager or
+Task Scheduler; Piik does not install a Windows service.
 Keep `.env` and `rooms.sqlite` across updates. Back up room data while the server is
 stopped, replace the executable with the new release, then restart and check
 health and room access. Read release notes before an upgrade that changes data formats.

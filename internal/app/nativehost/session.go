@@ -119,6 +119,9 @@ func Start(parent context.Context, options Options) (*Session, error) {
 	if options.ShareID == "" || len(options.ShareID) > 256 {
 		return nil, errors.New("native share identity is invalid")
 	}
+	if options.EdgeCapacity < 1 || options.EdgeCapacity > mediaedge.MaxRelayChildren {
+		return nil, errors.New("native share edge capacity is invalid")
+	}
 	if !options.Profile.Valid() || options.Video.Profile != options.Profile.Video {
 		return nil, errors.New("native share profile is invalid")
 	}
@@ -131,24 +134,11 @@ func Start(parent context.Context, options Options) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	options.Video.OutputGroups = options.EdgeCapacity
+	options.Video.OutputGroups = min(options.EdgeCapacity, nativecapture.MaxOutputGroups)
 	stream, err := nativecapture.StartVideo(parent, options.CaptureProcess, options.Video)
 	if err != nil {
 		_ = engine.Close()
 		return nil, err
-	}
-	var audioStream *nativecapture.Stream
-	if options.AudioEnabled {
-		var audioErr error
-		audioStream, audioErr = startAudioCapture(
-			parent,
-			options.CaptureProcess,
-			options.Video.Target,
-			options.ExcludeAudio,
-		)
-		if audioErr != nil {
-			slog.DebugContext(parent, "piik-client", "event", "capture-audio-unavailable", "share", diagnostics.ID(options.ShareID), diagnostics.Error(audioErr))
-		}
 	}
 	ctx, cancel := context.WithCancel(parent)
 	session := &Session{
@@ -158,7 +148,6 @@ func Start(parent context.Context, options Options) (*Session, error) {
 		profile:        options.Profile,
 		edgeCapacity:   options.EdgeCapacity,
 		stream:         stream,
-		audioStream:    audioStream,
 		engine:         engine,
 		events:         options.Events,
 		ctx:            ctx,
@@ -170,9 +159,44 @@ func Start(parent context.Context, options Options) (*Session, error) {
 		remoteInput:    options.RemoteInput.NewSession(),
 	}
 	session.syncRemoteInputSource(nil)
+	// Drain video while the optional audio process initializes. Otherwise a full
+	// video pipe can stall the platform capture service that audio also needs.
+	videoDone := make(chan error, 1)
+	go func() { videoDone <- session.runVideo() }()
+	var timeout <-chan time.Time
+	if options.Video.Target.Kind != "picker" {
+		timer := time.NewTimer(startTimeout)
+		defer timer.Stop()
+		timeout = timer.C
+	}
+	select {
+	case err = <-session.ready:
+	case <-timeout:
+		err = errors.New("native capture did not start in time")
+	case <-parent.Done():
+		err = parent.Err()
+	}
+	if err != nil {
+		cancel()
+		_ = stream.Close()
+		<-videoDone
+		session.retire()
+		return nil, err
+	}
+	// Start the optional audio helper only after video initialization, avoiding
+	// concurrent platform source enumeration while continuing to drain video.
+	var audioStream *nativecapture.Stream
+	if options.AudioEnabled {
+		var audioErr error
+		audioStream, audioErr = startAudioCapture(ctx, options.CaptureProcess, options.Video.Target, options.ExcludeAudio)
+		if audioErr != nil {
+			slog.DebugContext(ctx, "piik-client", "event", "capture-audio-unavailable", "share", diagnostics.ID(options.ShareID), diagnostics.Error(audioErr))
+		}
+		session.audioStream = audioStream
+	}
 	if audioStream != nil || options.MicrophoneMixing {
 		audioSource, audioErr := engine.NewAudioSource(
-			options.EdgeCapacity, options.Profile.AudioBitrate,
+			mediaedge.PhysicalSourceCapacity(options.EdgeCapacity), options.Profile.AudioBitrate,
 		)
 		if audioErr != nil {
 			slog.DebugContext(ctx, "piik-client", "event", "capture-audio-source-failed", "share", diagnostics.ID(options.ShareID), diagnostics.Error(audioErr))
@@ -189,34 +213,19 @@ func Start(parent context.Context, options Options) (*Session, error) {
 		if session.audioSource == nil {
 			cancel()
 			_ = stream.Close()
-			_ = engine.Close()
+			<-videoDone
+			session.retire()
 			return nil, errors.New("native mixed audio could not start")
 		}
 		session.mixer = &audioMix{ctx: ctx, output: session.audioSource, emit: session.emit, shareID: session.shareID, gain: 1}
 		session.mixer.setSource(audioStream)
 	}
-	go session.run()
-	var timeout <-chan time.Time
-	var timer *time.Timer
-	if options.Video.Target.Kind != "picker" {
-		timer = time.NewTimer(startTimeout)
-		timeout = timer.C
-		defer timer.Stop()
-	}
-	select {
-	case err = <-session.ready:
-		if err != nil {
-			_ = session.Close()
-			return nil, err
-		}
-		return session, nil
-	case <-timeout:
+	go session.run(videoDone)
+	if err := ctx.Err(); err != nil {
 		_ = session.Close()
-		return nil, errors.New("native capture did not start in time")
-	case <-parent.Done():
-		_ = session.Close()
-		return nil, parent.Err()
+		return nil, err
 	}
+	return session, nil
 }
 
 func (session *Session) ShareID() string {
@@ -450,7 +459,7 @@ func (session *Session) ReplaceSource(
 	options.Codec = session.videoOptions.Codec
 	options.AdapterIndex = session.videoOptions.AdapterIndex
 	options.EncoderIndex = session.videoOptions.EncoderIndex
-	options.OutputGroups = session.edgeCapacity
+	options.OutputGroups = min(session.edgeCapacity, nativecapture.MaxOutputGroups)
 	hasAudio := session.audioSource != nil && session.audioStream != nil
 	currentTarget := session.videoOptions.Target
 	audioOnly := options.Target.Kind != "picker" &&
@@ -610,7 +619,7 @@ func (session *Session) prepareVideo(
 	if err := ctx.Err(); err != nil {
 		return nil, CaptureState{}, err
 	}
-	options.OutputGroups = session.edgeCapacity
+	options.OutputGroups = min(session.edgeCapacity, nativecapture.MaxOutputGroups)
 	// Preparation can be cancelled independently. Installed capture always lives
 	// with the share; cancelling a permission request must not kill its process.
 	replacement, err := nativecapture.StartVideo(
@@ -825,11 +834,7 @@ func (session *Session) edge(connectionID string) *mediaedge.Edge {
 	return session.edges[connectionID]
 }
 
-func (session *Session) run() {
-	videoDone := make(chan error, 1)
-	go func() {
-		videoDone <- session.runVideo()
-	}()
+func (session *Session) run(videoDone <-chan error) {
 	audioDone := make(chan struct{})
 	qualityDone := make(chan struct{})
 	go func() {
@@ -937,7 +942,7 @@ func (session *Session) runVideo() error {
 					session.mu.Unlock()
 					return fail(errors.New("native capture codec was not applied"))
 				}
-				source, sourceErr := session.engine.NewSource(status.Codec, session.edgeCapacity, min(2, len(status.Outputs)), func(layers []int) {
+				source, sourceErr := session.engine.NewSource(status.Codec, mediaedge.PhysicalSourceCapacity(session.edgeCapacity), min(2, len(status.Outputs)), func(layers []int) {
 					if stream := session.currentStream(); stream != nil {
 						for _, layer := range layers {
 							_ = stream.RequestKeyFrame(layer)
@@ -1169,11 +1174,6 @@ func waitForCaptureProfile(
 				return
 			}
 			if state.State == "active" {
-				if state.Width != profile.Width || state.Height != profile.Height ||
-					state.FPS != profile.Framerate {
-					send(result{stage: "profile-mismatch", err: errors.New("native capture profile was not applied")})
-					return
-				}
 				state.AdapterIndex, state.EncoderIndex = starting.AdapterIndex, starting.EncoderIndex
 				state.unavailableLayers = unavailable
 				send(result{state: state})
@@ -1341,11 +1341,12 @@ func decodeCaptureState(payload []byte) (CaptureState, error) {
 		return CaptureState{}, errors.New("native capture starting state is incomplete")
 	}
 	original := state.Outputs[min(1, len(state.Outputs)-1)]
+	// Output profiles are ceilings; aspect-preserving capture may be smaller.
 	if state.State == "active" &&
 		((state.Codec == "h264" && !nativecapture.SupportedH264ProfileLevelID(state.ProfileLevelID)) ||
 			(state.Codec == "vp8" && state.ProfileLevelID != "") ||
-			state.Width != original.Width ||
-			state.Height != original.Height ||
+			!nativecapture.ValidVideoSize(state.Width, state.Height) ||
+			state.Width > original.Width || state.Height > original.Height ||
 			state.FPS != original.Framerate ||
 			len(state.RestoreToken) > 4096 || !utf8.ValidString(state.RestoreToken) ||
 			strings.ContainsRune(state.RestoreToken, 0)) {

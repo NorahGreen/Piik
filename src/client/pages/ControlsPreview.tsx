@@ -1,15 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import type { VideoFit } from "../media/video-geometry";
-import { Btn, Chip, NameTag, Pill, SwitchItem } from "../components/living/primitives";
+import type { VideoFit, VideoRotation } from "../media/video-geometry";
+import { BackButton, Btn, Chip, NameTag, Pill, SwitchItem } from "../components/living/primitives";
 import { RoomChip, RoomCodePlaceholder, RoomAdmissionBadge } from "../components/living/RoomChip";
 import { CaptureSourcePicker, type NativeSourceList } from "../components/living/CaptureSourcePicker";
 import { LedStrip } from "../components/living/Header";
 import { StageOverlay, StageTv } from "../components/living/Stage";
-import { HostMicrophone, HostMicrophoneSettings } from "../components/living/HostMicrophone";
 import { LiveAudioExclusion } from "../components/living/AudioExclusionSelect";
 import type { NativeCaptureTarget } from "../native/wire";
 import { RoomInteractions } from "../components/living/RoomInteractions";
-import { RoomChatOverlay, RoomChatOverlaySettings, RoomChatToggle } from "../components/living/RoomChatOverlay";
+import { RoomChatOverlay, RoomChatToggle } from "../components/living/RoomChatOverlay";
 import { RoomInteractionSession } from "../lib/room-interactions";
 import { createOpaqueId } from "../lib/opaque-id";
 import type { InteractionPayload } from "../../shared/protocol";
@@ -34,6 +33,7 @@ import { Glyph } from "../ui/icons";
 import { useCopy } from "../ui/copy";
 import { PeoplePreview } from "./PeoplePreview";
 import { RemoteControlsPreview } from "./RemoteControlsPreview";
+import { useRoomVoicePreview } from "./RoomVoicePreview";
 import "./controls-preview.css";
 
 const POSTER = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360"><rect width="640" height="360" fill="#e8eee6"/><rect x="100" y="60" width="440" height="240" rx="20" fill="#fffdf6"/><path d="M100 100h440" stroke="#c9d7cf" stroke-width="2"/><circle cx="128" cy="81" r="6" fill="#ed9e65"/><circle cx="320" cy="190" r="46" fill="#65b099"/><path d="m310 191 9 9 16-22" fill="none" stroke="#fffdf6" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>')}`;
@@ -48,7 +48,6 @@ const previewCameras: typeof loadCameraPreviews = async (_signal, publish) => pu
   { id: "built-in", label: "Built-in camera", preview: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 320"><rect width="180" height="320" fill="#dce9e5"/><rect x="106" y="26" width="58" height="102" rx="7" fill="#fbfcf3"/><path d="M135 26v102M106 76h58" stroke="#b2cbc2" stroke-width="4"/><path d="M36 255q0-100 54-100t54 100" fill="#449986"/><circle cx="90" cy="124" r="29" fill="#449986"/><path d="M81 122v4m18-4v4" stroke="#203c3a" stroke-width="5" stroke-linecap="round"/><path d="M0 259h180v61H0" fill="#d8b898"/><rect x="142" y="241" width="21" height="23" rx="5" fill="#fff7e9"/></svg>')}` },
   { id: "usb", label: "USB Camera", preview: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><rect width="320" height="180" fill="#e2c5a8"/><path d="M0 25h320M0 157h320" stroke="#cda987" stroke-width="2"/><rect x="53" y="27" width="163" height="124" rx="5" fill="#fffaf0" transform="rotate(-8 135 89)"/><path d="m97 112 30-35 23 25 18-12 18 19" fill="none" stroke="#689b8a" stroke-width="5" stroke-linejoin="round"/><circle cx="166" cy="57" r="11" fill="#ebbd63"/><path d="m245 64 8 77" stroke="#477b73" stroke-width="7" stroke-linecap="round"/><circle cx="266" cy="35" r="19" fill="#f9f5df"/><circle cx="266" cy="35" r="12" fill="#8c6651"/></svg>')}` },
 ]);
-const previewMicrophones = async () => [{ id: "headset", label: "USB Headset" }, { id: "desk", label: "Desk Microphone" }];
 const previewApplications = async () => SOURCES.sources;
 
 export function ControlsPreview() {
@@ -57,10 +56,6 @@ export function ControlsPreview() {
   const displayPreview = new URLSearchParams(window.location.search).get("source") === "display";
   const [sound, setSound] = useState(true);
   const [excludedAudio, setExcludedAudio] = useState<NativeCaptureTarget | undefined>(SOURCES.sources[2]);
-  const [microphone, setMicrophone] = useState(false);
-  const [microphoneVolume, setMicrophoneVolume] = useState(1);
-  const [voiceProcessing, setVoiceProcessing] = useState(true);
-  const [microphoneDevice, setMicrophoneDevice] = useState("");
   const [sharingSettings, setSharingSettings] = useState(false);
   const [remoteMode, setRemoteMode] = useState<RemoteControlMode>("off");
   const [quality, setQuality] = useState<QualityProfile>(QUALITY_PROFILES["1080p30"]);
@@ -89,6 +84,7 @@ export function ControlsPreview() {
   const [dial, setDial] = useState("60");
   const [theater, setTheater] = useState(false);
   const [pictureFit, setPictureFit] = useState<VideoFit>("contain");
+  const [pictureRotation, setPictureRotation] = useState<VideoRotation>(0);
   const [viewerRoute, setViewerRoute] = useState<"auto" | "p2p" | "sfu">("auto");
   const video = useRef<HTMLVideoElement>(null);
   const notify = () => setFeedback(en ? "Got it. This is a preview." : "收到，只在预览里演示。" );
@@ -98,11 +94,12 @@ export function ControlsPreview() {
         <header><span className="cp-number">01</span><h2>{en ? "Buttons, with a little give" : "按钮，按下去有回应。"}</h2></header>
         <p>{en ? "Hover, press, or use Tab and Enter. The disabled one keeps its explanation." : "悬停、按下，或用 Tab 和回车试试。禁用时也能查看原因。"}</p>
         <div className="cp-tools">
+          <BackButton onClick={notify} />
           <Btn icon="cast" tone="primary" title="host.start" cap="host.start" hint="hint-share-start" onClick={notify} />
           <Btn icon="stop" tone="danger" title="host.stop" cap="host.stop" hint="hint-share-stop" onClick={notify} />
           <Btn icon={paused ? "play" : "pause"} title={paused ? "host.resume" : "host.pause"} cap={paused ? "host.resume" : "host.pause"}
             hint={paused ? "hint-resume" : "hint-pause"} draw="preview-pause" pressed={paused} onClick={() => setPaused(!paused)} />
-          <Btn icon="gauge" tone="on" title="host.details" cap="host.details" hint="hint-details" pressed onClick={notify} />
+          <Btn icon="gauge" tone="on" title="host.details.hide" cap="host.details" hint="hint-collapse" pressed onClick={notify} />
           <Btn icon="refresh" title="viewer.reconnect" cap="viewer.reconnect" hint="hint-reconnect" disabled />
           <Btn icon="cast" title="host.starting" cap="host.starting" busy disabled hint="hint-share-start" />
         </div>
@@ -110,7 +107,7 @@ export function ControlsPreview() {
           <Btn icon="switchSource" title="host.switchSource" hint="hint-switch-source" onClick={notify} />
           <Btn icon="link" title="host.invite.copy" hint="hint-copy-invite" onClick={notify} />
           <Btn icon="linkOff" title="host.invite.revoke" hint="hint-revoke-invite" onClick={notify} />
-          <Btn icon="network" title="host.topology" hint="hint-topology" onClick={notify} />
+          <Btn icon="network" title="host.topology.show" hint="hint-topology" onClick={notify} />
           <Btn icon="sliders" title="host.advanced" hint="hint-advanced" onClick={notify} />
         </div>
         <p>{en ? "The same button family has regular, compact and dense sizes. Quiet actions keep a usable target without a visible frame."
@@ -129,8 +126,6 @@ export function ControlsPreview() {
       <section id="sharing-preview" className="cp-card cp-sharing-preview">
         <header><h2>{t("host.advanced")}</h2></header>
         <HostShareControls actions={<>
-          <HostMicrophone enabled={microphone} paused={paused} volume={microphoneVolume}
-            onToggle={() => setMicrophone(value => !value)} />
           <Btn icon="switchSource" title="host.switchSource" cap="host.switchSource" hint="hint-switch-source" onClick={notify} />
           </>}
           settings={<Btn icon="sliders" cap="host.settings.button" title={sharingSettings ? "host.advanced.hide" : "host.advanced"}
@@ -170,9 +165,7 @@ export function ControlsPreview() {
             <SwitchItem checked={sound} onChange={setSound} label={t("host.sourcePicker.systemAudio")}
               hint={sound ? "hint-stop-audio" : "hint-share-audio"} />
             <LiveAudioExclusion load={previewApplications} value={excludedAudio} onChange={setExcludedAudio} disabled={!sound || paused} />
-          </div><HostMicrophoneSettings deviceId={microphoneDevice} onDevice={setMicrophoneDevice} loadDevices={previewMicrophones}
-            native enabled={microphone} disabled={paused} volume={microphoneVolume} onVolume={setMicrophoneVolume}
-            voiceProcessing={voiceProcessing} onVoiceProcessing={setVoiceProcessing} />
+          </div>
           <AudioBitrateControl value={quality.maxAudioBitrate ?? QUALITY_PROFILES["1080p30"].maxAudioBitrate} max={MAX_SCREEN_AUDIO_BITRATE}
             disabled={false} onChange={maxAudioBitrate => setQuality(current => ({ ...current, maxAudioBitrate }))} />
           </>}
@@ -246,7 +239,9 @@ export function ControlsPreview() {
           <SwitchItem checked={invalid} onChange={setInvalid} label={en ? "Show error" : "看看错误态"} />
         </div>
         {invalid ? <p id="preview-input-error" className="cp-input-error" role="alert">{en ? "That password did not match. Try again." : "密码没对上，再试一次。"}</p> : null}
-        <div className="cp-tools"><RoomCodePlaceholder /><RoomChip roomId={roomCode} onReplace={() => setRoomCode(code => code === "6020" ? "2048" : "6020")} /></div>
+        <div className="cp-tools"><RoomCodePlaceholder /><RoomCodePlaceholder onCreate={notify} />
+          <RoomCodePlaceholder onCreate={notify} disabled busy />
+          <RoomChip roomId={roomCode} onReplace={() => setRoomCode(code => code === "6020" ? "2048" : "6020")} /></div>
         <RoomCodeInput value={dial} onChange={setDial} />
       </section>
       <section id="feedback-preview" className="cp-card">
@@ -254,6 +249,7 @@ export function ControlsPreview() {
         <div className="cp-tools">
           <LedStrip state="live" label={t("state.signal.connected")} comic="signal-connected" />
           <LedStrip state="busy" label={t("state.signal.connecting")} comic="signal-connecting" />
+          <LedStrip state="warn" label={t("state.signal.reconnecting")} comic="signal-recovering" />
           <LedStrip state="off" label={t("state.signal.offline")} comic="signal-offline" />
         </div>
         <div className="cp-tools"><Pill icon="check" tone="live" label={t("common.copied")} comic="hint-copy-code" />
@@ -300,7 +296,7 @@ export function ControlsPreview() {
         <video ref={video} poster={POSTER} playsInline inert style={{ objectFit: pictureFit }} />
         <StageOverlay dim waiting icon={STATUS_CATALOG.joining.icon} message={t(STATUS_CATALOG.joining.labelKey)} comic={STATUS_CATALOG.joining.comic} />
         <PlaybackControls videoRef={video} stream={null} canPlay={false} theaterMode={theater} onPlay={notify}
-          settings={{ pictureFit, setPictureFit, route: { preference: viewerRoute, onChange: setViewerRoute,
+          settings={{ pictureFit, setPictureFit, pictureRotation, setPictureRotation, route: { preference: viewerRoute, onChange: setViewerRoute,
             sfuAvailable: true, sfuOnly: false, peerOnly: false, disabled: false, rejected: false } }}
           onToggleTheater={() => setTheater(!theater)} onReconnect={notify} reconnectAvailable />
       </StageTv></div>
@@ -332,7 +328,7 @@ export function ControlsPreview() {
     </section>
     <section id="interaction-preview" className="cp-section">
       <header className="cp-section-head"><span className="cp-number">09</span><div><h2>{en ? "A little company" : "聊两句，丢个番茄。"}</h2>
-        <p>{en ? "Chat and react in one window. Open reactions beside the message input; supported browsers can keep this window on top." : "聊天和表情都在一个窗口里。点输入区的「发表情」选择互动对象；支持的浏览器可以将窗口置顶。"}</p></div></header>
+        <p>{en ? "Chat, reactions and room voice share one window. This catalogue simulates voice controls without opening your microphone." : "聊天、表情与房间语音共用一个窗口。这里的语音控件仅作演示，不会打开麦克风。"}</p></div></header>
       <InteractionControlsPreview />
     </section>
     <RemoteControlsPreview />
@@ -342,6 +338,7 @@ export function ControlsPreview() {
 function InteractionControlsPreview() {
   const [session, setSession] = useState<RoomInteractionSession | null>(null);
   const [viewer, setViewer] = useState(false);
+  const voice = useRoomVoicePreview(viewer);
   const [crowded, setCrowded] = useState(false);
   const [reaction, setReaction] = useState<ReactionId>("heart");
   const [theater, setTheater] = useTheaterMode();
@@ -388,8 +385,8 @@ function InteractionControlsPreview() {
     <RoomChatOverlay session={session} visible />
     <PlaybackControls videoRef={video} stream={null} canPlay={false} onPlay={() => {}}
       theaterMode={theater} onToggleTheater={() => setTheater(value => !value)} onReconnect={() => {}} reconnectAvailable={false}
-      overlayAction={<RoomChatToggle session={session} />} overlaySettings={session && <RoomChatOverlaySettings session={session} />} />
-  </StageTv><RoomInteractions session={session}
+      overlayAction={<RoomChatToggle session={session} />} />
+  </StageTv><RoomInteractions session={session} voice={voice}
     view={viewer ? "viewer" : "host"} host={{ key: "preview-host", name: "Piik", you: !viewer }} entries={
       Array.from({ length: crowded ? 20 : 1 }, (_, index) => ({
         key: index ? `preview-friend-${index}` : "preview-friend", name: index ? `Friend ${index + 1}` : "Piik friend",

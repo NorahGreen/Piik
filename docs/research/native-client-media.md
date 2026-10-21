@@ -135,32 +135,37 @@ and the [upstream audio-capture lifecycle](https://github.com/obsproject/obs-stu
 Existing Go pipe fixtures now cover ready-but-silent audio, audio that never
 becomes ready, video startup in both cases and cancellation of blocked readers.
 Both controls pass without changing Go startup deadlines or adding retries.
-They do not reproduce the report's additional video timeout. Its display-audio
-attempt and window-filter crash refer to different processes; they do not
-establish one failure or an App bundle-identity collision. The native audio
-self-test is part of the Mac capture check. Both Darwin architectures compiled
-and passed that self-test in candidate CI on 2026-10-19; actual source/microphone
-capture and permissions remain unverified on this Windows workstation.
+The native audio self-test is part of the Mac capture check; both Darwin
+architectures compiled and passed it in candidate CI on 2026-10-19.
 
-The remaining video timeout needs a separate Mac reproduction. Darwin emits
-`StartingStatus` after `SCShareableContent` enumeration and filter construction,
-before creating or starting its video stream. Native Host currently starts both
-helpers before reading video status, so their initial enumerations can overlap.
-An [Apple Developer Forums report](https://developer.apple.com/forums/thread/772365)
-reproduces an unresponsive `replayd` and similar 4097 errors using repeated
-concurrent enumeration from multiple processes, without capturing media
-(FB16310901). This is a candidate mechanism, not an established cause of #486;
-Apple has not confirmed its cause or a fix.
+The 2026-10-20 pipe reproduction establishes a second startup defect: waiting
+for audio readiness before reading video can fill the video pipe and block a
+capture service that audio initialization also needs. The session now waits for
+video readiness while draining video, then initializes optional source audio.
+The full-pipe/silent/no-ready controls and native Host lifecycle tests pass
+without longer deadlines. This also removes the overlapping initial source
+enumeration described in an [Apple Developer Forums report](https://developer.apple.com/forums/thread/772365)
+(FB16310901); that report does not establish the cause of every #486 timeout.
 
-The smallest Mac comparison uses the existing `piik-capture --list`: run one
-helper, then two concurrently, under the same parent with bounded attempts.
-Discard source metadata and retain only timing and errors. Separately compare
-current startup with waiting for the video's existing `StartingStatus` before
-starting audio. Keep deadlines, bundle identity and permissions unchanged in
-these comparisons. Terminal versus App launch is a separate variable:
-[Apple DTS describes TCC's responsible-process attribution](https://developer.apple.com/forums/thread/125438),
-so a successful manual helper does not establish identical permission context.
-No same-parent comparison or startup-order fix has yet been verified on a Mac.
+The window-audio filter now selects the owning application on a display, matching
+its process-audio responsibility, rather than constructing a video-window filter.
+The helper initializes CoreGraphics through its public display API before asking
+ScreenCaptureKit for content. This addresses the initialization dependency shown
+by the reported SkyLight filter crash and the [primary implementation](https://github.com/indutny/mac-screen-share/blob/main/addon.mm).
+These Darwin changes passed Mac SDK compilation and packaged startup on both
+architectures in candidate CI on 2026-10-20. Physical source/audio capture remains
+unverified here.
+Terminal launch and App launch remain distinct permission contexts under
+[Apple's TCC attribution](https://developer.apple.com/forums/thread/125438).
+
+The subsequent Mac report also identified an App-side geometry mismatch:
+ScreenCaptureKit correctly reports the source's fitted size, but startup required
+exact equality with the selected ceiling. The shared status decoder now admits
+legal even dimensions within the original output ceiling, while retaining the
+codec, frame-rate and output-plan checks. Preparation uses that same validation.
+The process fixture reproduces the previous rejection of a 640x480 source under
+a 1280x720 ceiling and passes with the correction; this does not substitute for
+physical Mac capture.
 
 ## Current Boundary
 
@@ -202,7 +207,7 @@ less initialization and a valid handoff, not a material speedup or a repair for
 an uninterruptible driver call. Concurrent cadence benchmarks are not adopted:
 shared-device contention would change the capability being measured.
 
-The current v2.2.1 report in [#437](https://github.com/TNTcraftHIM/Piik/issues/437)
+The earlier v2.2.1 report in [#437](https://github.com/TNTcraftHIM/Piik/issues/437)
 records device loss after about 3.25 seconds, before the Auto selection finishes.
 The selector could then enter another candidate despite lacking time for its
 required cadence measurement. Admission now uses that same measurement schedule
@@ -210,6 +215,26 @@ before synchronous setup, preserving the existing VP8 fallback. A 750 ms
 remaining-budget control rejects Auto at 30 fps but retains manual H264 and the
 immediate 1 fps probe. This fixes budget admission, not the physical
 `DEVICE_HUNG`; the later blocked API and reporter-device outcome remain unknown.
+
+The [October 20 follow-up](https://github.com/TNTcraftHIM/Piik/issues/437#issuecomment-6284470067)
+contains v2.2.2 App evidence: all six Auto attempts report device loss during
+probe texture creation, with removal reason `DEVICE_HUNG`, then select VP8.
+Four reach active capture; two later hit local-edge preparation deadlines.
+The reporter's separate manual-H264 success is not in this trace. The failing
+API locates detection, not necessarily the GPU operation that caused the hang.
+
+The local candidate now prepares synthetic BGRA through the existing capture
+converter, supplying the same GPU-produced NV12 surface contract as live capture.
+It retains eight distinct frames outside the cadence measurement, and keeps
+deadlines, genuine failures, fallback and the proven encoder instance unchanged.
+[Microsoft permits initialized textures](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11device-createtexture2d);
+this is not a claim that every direct NV12 allocation is invalid.
+[Chromium's MF input handling](https://chromium.googlesource.com/chromium/src/+/main/media/gpu/windows/media_foundation_video_encode_accelerator_win.cc)
+also distinguishes initialized CPU uploads from video-processor output and
+preserves consistent encoder inputs. Local NVIDIA/AMD conversion checks and
+retained-frame checks pass. Single Auto controls selected H264 in 1.7–1.8 seconds,
+with explicit H264 around 0.2 seconds; these are neither a benchmark nor a
+reproduction of the reporter's driver hang. The affected-device retest remains open.
 
 The `input-texture-create / 0x887a0005` report identifies a lost D3D device during
 candidate preparation, not a failed room route or proof that every candidate
@@ -871,6 +896,16 @@ source geometry, retirement and distinct Portal node-ID/serial targeting.
 This uses GStreamer 1.28.3 and libportal 0.9.1 on an isolated Alpine runner;
 its probe correctly reports no capture without a desktop session. Actual
 Portal capture and platform packaging remain separate checks.
+
+The square-pixel correction from [#488](https://github.com/TNTcraftHIM/Piik/pull/488)
+constrains the raw desktop source before downstream scaling. This follows
+[GStreamer negotiation](https://gstreamer.freedesktop.org/documentation/plugin-development/advanced/negotiation.html):
+the source selects from downstream caps, so an output-only constraint can leave
+PipeWire choosing an extreme pixel aspect ratio. The headless regression checks
+source fixation and real 3840x2160 to 1920x1080 conversion. The contributor reports
+restored KDE Wayland capture on AMD hardware; that is separate from our build
+checks and does not establish all desktop/driver combinations. Encoded-input
+transcoding keeps its existing path and source-aspect handling.
 
 A uniform-noise 4K1/50 Mbps stress input reached the retained 4 MiB access-unit
 guard in both Native codecs; VP8 produced a 6,199,837-byte frame. The output was

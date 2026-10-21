@@ -66,8 +66,8 @@ you can also create a room in the online version.
 1. Select **Start sharing**, then choose the picture and audio to share.
 2. Select **Copy invite link** and send it to your friends. Keep the sharing tab open.
 
-Turn on the **Microphone** for commentary; its settings let you choose the input
-device and adjust your voice volume.
+Open **Interact → Voice** to talk together, with or without picture sharing.
+The Host opens voice; everyone joins to listen and chooses when to turn on their microphone.
 
 Piik follows your system language: Chinese or English, with English as the fallback.
 Use **中 / EN / ✦** in the header to switch language or try the visual mode.
@@ -84,7 +84,7 @@ Download a ZIP beginning with **`piik-app`**. The filename also identifies the p
 | `linux-amd64` | Linux x64 |
 | `linux-arm64` | Linux ARM64 |
 
-[**Full setup guide →**](./docs/guide/getting-started.md) · [**Open online →**](https://demo.piik.tv)
+[**Getting started →**](./docs/guide/getting-started.md) · [**Troubleshooting →**](./docs/guide/troubleshooting.md)
 
 Browser capture requires HTTPS or `localhost`. Windows App and desktop browser
 sharing are the primary tested paths. Physical-device coverage for the macOS and
@@ -107,6 +107,9 @@ extract it, and run:
 ```sh
 ./piik-server
 ```
+
+Windows x64 uses `piik-<revision>-windows-amd64-runtime.zip`; extract it and run
+`./piik-server.exe` in PowerShell. The same configuration applies.
 
 Open `http://localhost:8787` to try it locally. For a public site, configure your
 domain, HTTPS reverse proxy and STUN address. Room data is stored in SQLite.

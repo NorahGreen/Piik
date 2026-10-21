@@ -62,6 +62,7 @@ export type Set1Kind =
 export type Set2Kind =
   | "hint-copy-code"
   | "hint-shuffle-code"
+  | "hint-create-room"
   | "hint-copy-invite"
   | "hint-invite-link"
   | "hint-client-link"
@@ -98,6 +99,7 @@ export type Set4Kind =
   | "hint-join-go"
   | "hint-theater"
   | "hint-theater-exit"
+  | "hint-route-auto"
   | "hint-route-p2p"
   | "hint-route-p2p-required"
   | "hint-route-sfu-required"
@@ -110,6 +112,7 @@ export type PlaybackHintKind =
   | "hint-fit-contain"
   | "hint-fit-cover"
   | "hint-fit-fill"
+  | "hint-picture-rotation"
   | "hint-local-play"
   | "hint-local-pause"
   | "hint-volume"
@@ -166,6 +169,23 @@ export type RemoteHintKind =
   | "hint-remote-mouse-lock"
   | "hint-remote-mouse-release";
 
+export type RelayHintKind = "hint-relay-volunteer";
+
+export type VoiceHintKind =
+  | "hint-voice-open"
+  | "hint-voice-close"
+  | "hint-voice-closed"
+  | "hint-voice-join"
+  | "hint-voice-leave"
+  | "hint-voice-microphone-on"
+  | "hint-voice-microphone-off"
+  | "hint-voice-host-microphone-unavailable"
+  | "hint-voice-microphone-unavailable"
+  | "hint-voice-microphone-volume"
+  | "hint-voice-microphone-processing"
+  | "hint-voice-deafen"
+  | "hint-voice-undeafen";
+
 export type HintKind =
   | Set1Kind
   | Set2Kind
@@ -176,6 +196,8 @@ export type HintKind =
   | MetricHintKind
   | InteractionHintKind
   | RemoteHintKind
+  | RelayHintKind
+  | VoiceHintKind
   | ControlHintKind;
 
 export type ComicTheme = "stage" | "paper";

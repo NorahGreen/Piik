@@ -35,6 +35,10 @@ export function Cap({ k }: { k: CopyKey }) {
   return vis ? null : <span className="lr-cap">{t(k)}</span>;
 }
 
+export function BackButton({ onClick }: { onClick: () => void }) {
+  return <Btn icon="arrowLeft" title="common.back" cap="common.back" size="dense" quiet hint="hint-collapse" onClick={onClick} />;
+}
+
 export function Btn({
   id,
   icon,
@@ -56,6 +60,7 @@ export function Btn({
   hintTone,
   hintMotion,
   draw,
+  iconOverlay,
 }: {
   id?: string;
   icon: GlyphName;
@@ -80,6 +85,8 @@ export function Btn({
   hintMotion?: ComicMotion;
   /** Draw-in spot id for state-beat toggle icons (see Glyph). */
   draw?: string;
+  /** Noninteractive artwork that moves with the icon, such as its input meter. */
+  iconOverlay?: ReactNode;
 }) {
   const { t, vis } = useCopy();
   const label = t(title);
@@ -118,6 +125,7 @@ export function Btn({
         draw={draw}
         className={busy ? "lr-spin" : undefined}
       />
+      {iconOverlay}
       {cap ? <Cap k={cap} /> : null}
     </button>
   );

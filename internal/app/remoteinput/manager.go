@@ -57,12 +57,16 @@ type View struct {
 
 // One manager covers both native sessions: they operate the same physical desktop.
 type Manager struct {
-	mu          sync.Mutex
-	sink        inputSink
-	connections map[endpointKey]*connection
-	active      *connection
-	closed      bool
-	stop        context.CancelFunc
+	mu           sync.Mutex
+	sink         inputSink
+	connections  map[endpointKey]*connection
+	sessions     map[*Session]struct{}
+	active       *connection
+	closed       bool
+	stop         context.CancelFunc
+	stopKey      int
+	registerStop func(int) (func(), error)
+	stopShortcut func()
 }
 
 type Session struct {
@@ -107,13 +111,18 @@ func New(ctx context.Context, captureInput bool) (*Manager, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	m := &Manager{sink: sink, connections: make(map[endpointKey]*connection), stop: cancel}
-	if err := watchStopShortcut(ctx, func() { m.Revoke() }); err != nil {
-		cancel()
-		if closer, ok := sink.(io.Closer); ok {
-			_ = closer.Close()
+	m := &Manager{sink: sink, connections: make(map[endpointKey]*connection), stop: cancel,
+		stopKey: defaultStopKey}
+	stopPressed := make(chan struct{}, 1)
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		m.registerStop = func(key int) (func(), error) {
+			return watchStopShortcut(ctx, key, func() {
+				select {
+				case stopPressed <- struct{}{}:
+				default:
+				}
+			})
 		}
-		return nil, err
 	}
 	// Foreground changes must release held input even when the remote player
 	// is holding a key without sending more events. Only an active grant polls.
@@ -124,6 +133,8 @@ func New(ctx context.Context, captureInput bool) (*Manager, error) {
 			select {
 			case <-ctx.Done():
 				return
+			case <-stopPressed:
+				m.Revoke()
 			case <-ticker.C:
 				m.mu.Lock()
 				m.refreshActive()
@@ -138,8 +149,17 @@ func (m *Manager) NewSession() *Session {
 	if m == nil {
 		return nil
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil
+	}
 	s := &Session{manager: m, changed: make(chan struct{}, 1), mode: "off"}
 	s.route = inputroute.New(s.receivePacket)
+	if m.sessions == nil {
+		m.sessions = make(map[*Session]struct{})
+	}
+	m.sessions[s] = struct{}{}
 	return s
 }
 
@@ -500,6 +520,8 @@ func (s *Session) Close() {
 			delete(m.connections, id)
 		}
 	}
+	delete(m.sessions, s)
+	m.releaseIdleShortcut()
 	s.notify()
 	m.mu.Unlock()
 	s.route.Close()
@@ -527,10 +549,15 @@ func (m *Manager) Close() {
 	}
 	m.closed = true
 	m.release()
+	stopShortcut := m.stopShortcut
+	m.stopShortcut = nil
 	if closer, ok := m.sink.(io.Closer); ok {
 		_ = closer.Close()
 	}
 	m.mu.Unlock()
+	if stopShortcut != nil {
+		stopShortcut()
+	}
 	if m.stop != nil {
 		m.stop()
 	}

@@ -7,8 +7,7 @@ watching, using Piik online, using Piik App and sharing through an existing site
 
 [Join a room](#join-a-friends-room) · [Use online](#use-piik-online) ·
 [Piik App](#share-with-piik-app) · [Existing site](#share-from-an-existing-site) ·
-[Remote control](#let-a-friend-control-your-shared-screen) · [Chat and reactions](#chat-and-reactions) ·
-[Troubleshooting](#when-something-gets-in-the-way)
+[Room tools](./room-tools.md) · [Troubleshooting](./troubleshooting.md)
 
 Viewers need a browser and an invitation. To start sharing, download Piik App
 and choose **Public invite**. To share without installing, open
@@ -25,18 +24,7 @@ Use the playback button to pause or resume; on a computer, double-click the pict
 leave fullscreen where supported. On a phone, tap the picture to show the bar
 and use its buttons. Safari may show system controls in video fullscreen.
 
-<details>
-<summary>Playback controls, at a glance</summary>
-
-| Control | What it does |
-| --- | --- |
-| **Theater mode** | Expands the picture inside the browser tab. |
-| **Fullscreen** | Expands the picture to the full screen. |
-| **Picture in picture** | Opens a floating video where supported. |
-| **Volume** | Goes up to 200% with audio boost, or 100% otherwise. Lower it if the sound distorts. |
-| **Playback settings** | **Fit** keeps the whole picture visible; **Fill** crops its edges; **Stretch** fills the area by changing its proportions. Connection settings default to **Auto**; available alternatives depend on the host and site. |
-
-</details>
+See [playback controls](./sharing.md#playback-controls) for display and sound options.
 
 With just a four-digit room code, open the same Piik site and choose
 **Join a room**. You may need the site's passphrase and the room's password.
@@ -77,6 +65,8 @@ restrictive networks may load the page but block video.
    **Screens** as available. Pick the actual source and sound option.
 5. Copy and send the room invitation. Keep both the App and sharing tab open.
 
+If macOS blocks the first launch, follow the [Mac opening steps](./troubleshooting.md#macos-blocks-first-launch).
+
 Click the launcher's update button to download the new App. **Gitee mirror**
 provides an alternative if the download is slow or unavailable. A new major
 version includes a compatibility warning that links to the upgrade instructions;
@@ -105,6 +95,9 @@ See the [App guide](../../cmd/piik-app/README.md) for package and runtime detail
 
 For Local room and Public invite, expand **Site passphrase** to set an optional
 access passphrase.
+Local invitations use HTTPS. On first access, confirm the local certificate
+against the Host's App terminal before continuing; see the
+[certificate guide](./troubleshooting.md#local-https-certificate-warning).
 Once the room service starts, click the connected **App** button at the top right
 to return to the launcher, manage site access or reopen the room. The App terminal
 also keeps an **App launcher** address. To change between Local room and Public
@@ -126,18 +119,12 @@ selector; its list updates as soon as the connection completes.
 If connection fails, the App button offers **Retry** and **Download App**.
 You can still share and watch in your browser.
 
-The same browser remembers this connection. On later visits, **Start sharing**
-offers **Apps / Windows** and **Screens** from the running App. In another browser,
-in a private window or after clearing site data, connect again. The same exact
-site already approved by App needs no repeat confirmation. The launcher
-shows the approved site; **×** beside its address revokes access. Approving a different site
-replaces the previous one and ends that site's App connections.
-Select **☆** beside the address to open that site automatically next time you
-start the App. Turn it off to return to the launcher on startup. The connected
-**App** button on the site opens the launcher for these settings.
-If the site is unavailable, use the **App launcher** address in the App terminal.
-To use your App with a friend's new public-invitation address, connect and approve
-that address again. Sharing-quality settings saved in App survive the address change.
+The browser remembers the connection to an approved site. Reconnect after
+changing browsers, using a private window or clearing site data. In the App
+launcher, **×** revokes a site and **☆** makes it open next time; approving a
+different site replaces the previous one. See the [App reference](../../cmd/piik-app/README.md#modes)
+for these options and returning to the launcher. A new public-invite address needs
+its own approval.
 
 **A page that opens does not guarantee a video connection.** Public invite gives
 your room a temporary web address; picture and sound still travel between
@@ -160,8 +147,7 @@ Read the release notes on
   the [update guide](../operations/service-management.md). Then update the Apps
   connecting to that site and refresh all sharing and viewing pages.
 
-Restarting an App or Server interrupts active shares. This upgrade does not
-change the room database schema.
+Restarting an App or Server interrupts active shares.
 
 ## Share from an existing site
 
@@ -188,159 +174,8 @@ The site manages rooms and invitations; the App supplies native capture.
 If its operator has enabled SFU forwarding, turn off **Privacy mode** before
 sharing to allow that fallback. The project's online site uses P2P only.
 
-## Picture and sound settings
+## Next steps
 
-Open **Sharing settings** below the picture. Picture presets are directly available;
-expand **Fine-tune picture** for resolution, frame-rate, bitrate, picture preference and video codec.
-
-- In **Fine-tune picture**, enter width and height under **Resolution limit**.
-  Piik preserves the source's proportions within that ceiling, including portrait
-  and ultrawide pictures.
-- Sliders cover 15–60 fps in steps of 5 and 2–12 Mbps in steps of 0.5. You can also enter an
-  **FPS limit** from 1 to 240 fps and a **Bitrate limit** from 0.1 to 240 Mbps.
-  Values outside those slider steps show **Custom**; **Use common range**
-  selects the nearest available slider value.
-  The frame-rate limit depends
-  on picture size: for example, 1080p240, 1440p144 and 4K60 are accepted requests.
-- Under **Sound**, adjust source audio and microphone input. **Audio quality**
-  controls the shared audio output: choose a preset or enter an **Audio bitrate limit**
-  from 6 to 320 kbps.
-
-The selectable range depends on picture size and the connected App. Picture and sound
-still adapt to the source, device and available bandwidth.
-
-Piik remembers your applied settings for the next visit. Browser-only use remembers
-them for the current site; opening Piik through an updated App also keeps them
-when your public-invite address changes.
-
-## Add your voice
-
-While sharing, select **Microphone** below the picture and
-allow microphone access. Select it again to mute. Open **Sharing settings → Sound** below the picture
-to choose a microphone and adjust its input volume.
-The default volume is 100%, with up to 200% available.
-Source audio and your voice reach viewers together. The Host preview stays muted.
-
-Camera sharing does not enable the microphone automatically. App **Apps / Windows**
-and **Screens** capture use the same controls. Leave the device on **Default device**
-or choose a specific microphone. In the **Camera** tab, allow access if asked,
-then select a picture card to start sharing. Device names and previews depend on
-browser permissions; while a camera is shared, other cameras are listed by name.
-Use headphones to keep speaker sound from feeding back into the microphone.
-
-With **Browser** or **Camera** capture, **Noise & echo reduction** in sound
-settings is on by default, asking the browser to handle echo, noise and volume.
-Turn it off for music or a virtual audio input. Device and system effects remain
-controlled by their own settings. App native capture uses device/system audio settings.
-
-A camera with a built-in microphone still needs separate video and audio input
-selection. OBS Virtual Camera supplies video only. To include OBS audio, follow
-the [OBS audio-routing guide](https://obsproject.com/kb/video-call-streaming-tutorial/),
-then select the virtual audio input in Piik's microphone list and turn on the microphone.
-
-### Exclude a voice app from screen audio
-
-On Windows, this control applies to system sound from **Screens**. **Apps / Windows**
-captures only the selected application's process tree; **Camera** uses the separately
-selected microphone or audio input.
-
-On supported Windows Apps, open the **Screens** tab and enable **System sound**.
-Under **Exclude application audio**, select a window belonging to the voice app,
-then choose the screen to share. Open the app's window and refresh if it is absent.
-This excludes one process and its children. Other apps remain audible, including
-those playing through other output devices.
-It does not mute your Piik microphone or prevent speaker sound reaching a microphone.
-
-If a virtual microphone remains audible with Piik's microphone off, temporarily
-turn off **System sound** to compare. If the voice disappears, check the mixer's
-playback output and monitoring, or capture only the desired application's window
-audio. Excluding a voice app does not also exclude a separate mixer that plays
-your processed voice, even through a virtual output device.
-
-While sharing, use **Sharing settings → Sound** to change system sound or the
-excluded app without stopping the share. If the app closes or restarts, source
-audio stops; refresh the application list and select it again.
-Turning source audio off retains the exclusion choice;
-select **None** to restore unfiltered system audio. This control requires an updated page and a Windows App
-whose capability probe supports process exclusion; it is not a Browser-capture filter.
-Windows 10 support depends on system updates and the actual capability check.
-If the option is absent, share a single application window or route the voice
-app to a different playback device.
-
-## Let a friend control your shared screen
-
-1. Share through Piik App using **Apps / Windows** or **Screens**.
-2. Open **Remote control** below the picture and turn it on. It starts with
-   **Ask each time**.
-3. Your friend selects **Request control** in their playback bar. Choose
-   **Allow control** on your sharing page when their request arrives.
-
-When sharing a window, switch back to that window after allowing control. Input
-pauses while another window is active and resumes when you return.
-
-One viewer can control at a time, using a desktop or mobile browser. Update the
-host's App and the room's site, then refresh the viewing page. The control button
-appears when the host enables control and the connection supports it. Browser
-and camera capture cannot receive remote input.
-
-Either person can choose **End control**. On the host's computer, **Ctrl+Alt+F10**
-on Windows or **Control+Option+F10** on macOS also stops control. Changing the
-shared source or stopping sharing turns remote control off. After a connection
-interruption, the viewer requests control again.
-
-On a phone, swipe to move the pointer, tap to click and hold to drag. Two-finger
-tap is right-click; two-finger swipe scrolls. Pinch to zoom, then use two fingers
-to move around the enlarged picture. **Remote keyboard** provides keys,
-shortcuts and text input. On a computer, **Game mouse** captures continuous
-mouse movement; press **Esc** to release it.
-
-<details>
-<summary>Permissions and platform support</summary>
-
-**Room Viewers** allows a room member to take idle control without asking each
-time; **Password** requires a separate control password. These choices apply
-only to the current shared source. Control gives access to the computer's mouse
-and keyboard, so allow people you trust. It is not limited to what is visible
-inside the video.
-
-macOS asks for Accessibility permission. Linux needs a supported desktop Portal
-and currently controls a selected screen, not an application window. Windows
-is the primary physically tested host; macOS/Linux device acceptance is still
-limited. System-protected shortcuts and some games may not accept remote input.
-
-</details>
-
-## Chat and reactions
-
-Once the host starts the first share, participants can select **Interact** below the
-sofa to send messages. Select a person on the sofa to open their reaction menu:
-your own reactions appear above you; reactions sent to a friend fly towards them.
-The interaction window can be moved and resized without rearranging the page.
-
-Supported desktop browsers show **Open in always-on-top window** in its top-right
-corner. You can read messages, see reactions and select someone to interact with
-while playing. Keep the Piik page open; closing the small window returns it to the page.
-Use a windowed or borderless game; exclusive fullscreen may cover the window.
-The window cannot show the game through its background or let mouse clicks pass through.
-
-**On screen**, beside the message box or in the viewer's playback bar, shows new
-messages over the picture. It is off by default and only changes your own view.
-Adjust text size and opacity in **Playback settings → On-screen chat**, or in
-the chat window's **Chat settings**. Both use the same local preferences.
-System video fullscreen and picture in picture cannot show these overlays.
-
-Stopping a share keeps the room's chat available. App Local and Public invite
-rooms require the App to stay open. Each page retains only its latest received
-messages: refreshing clears them, and late joiners receive no earlier history.
-To keep a copy, use **Chat settings → Export chat** to save the latest messages
-retained on this page (up to 1,000) as a text file.
-Chat travels through the room's server and is **not end-to-end encrypted**.
-
-## When something gets in the way
-
-For sound, capture, startup or playback issues, see [Troubleshooting](./troubleshooting.md).
-
-### When video will not connect
-
-See [connection troubleshooting](./troubleshooting.md#when-video-will-not-connect)
-for “No media route available” and similar connection failures.
+- [Sharing and playback](./sharing.md): picture settings, camera inputs and source sound.
+- [Chat, voice and remote control](./room-tools.md): talk, react or let a friend take control.
+- [Troubleshooting](./troubleshooting.md): start from the symptom you see.

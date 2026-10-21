@@ -16,11 +16,20 @@ describe("release automation", () => {
   it("shares only an authored leading bilingual headline with the website", () => {
     const opening = "**Play together. Your turn!**\n\n**远程同乐，轮到你啦！**";
     expect(splitReleaseHeadline(`${opening}\n\n### 中文\n\n修复开播。`)).toEqual({
-      headline: { "zh-CN": "远程同乐，轮到你啦！", en: "Play together. Your turn!" },
+      headline: { "zh-CN": { title: "远程同乐，轮到你啦！", description: "" }, en: { title: "Play together. Your turn!", description: "" } },
       notes: "### 中文\n\n修复开播。",
     });
     expect(splitReleaseHeadline(opening.replaceAll("\n\n", "\r\n\r\n\r\n")).headline)
-      .toEqual({ "zh-CN": "远程同乐，轮到你啦！", en: "Play together. Your turn!" });
+      .toEqual({ "zh-CN": { title: "远程同乐，轮到你啦！", description: "" }, en: { title: "Play together. Your turn!", description: "" } });
+    const explained = "**Play together. Your turn!**\n\nPiik now supports remote control and remote co-play.\n\n" +
+      "**远程同乐，轮到你啦！**\n\nPiik 现已支持远程控制与远程同乐。";
+    expect(splitReleaseHeadline(`${explained}\n\n### English\n\nSharing fixes.`)).toEqual({
+      headline: {
+        en: { title: "Play together. Your turn!", description: "Piik now supports remote control and remote co-play." },
+        "zh-CN": { title: "远程同乐，轮到你啦！", description: "Piik 现已支持远程控制与远程同乐。" },
+      },
+      notes: "### English\n\nSharing fixes.",
+    });
     for (const body of [undefined, "旧版本说明", "**只有一句**", "**   **\n\n**English**",
       "**Fixed** **disconnects**\n\n**Details**", `本次更新\n\n${opening}`, `### 中文\n\n${opening}`]) {
       expect(splitReleaseHeadline(body)).toEqual({ headline: null, notes: body ?? "" });
@@ -103,7 +112,8 @@ describe("release automation", () => {
       }));
       expect(candidate).toMatchObject({ version: "v1.0.1", publish: false });
       commit("fix: repair playback\n\n## Release notes\n**Earlier theme**\n\n**旧主题**\n\n- Playback resumes after reconnecting.");
-      const opening = "**Play together. Your turn!**\n\n**远程同乐，轮到你啦！**";
+      const opening = "**Play together. Your turn!**\n\nPiik now supports remote control and remote co-play.\n\n" +
+        "**远程同乐，轮到你啦！**\n\nPiik 现已支持远程控制与远程同乐。";
       const next = commit(`feat: add a sharing option\n\n## Release notes\n${opening}\n\n- Choose a window to share.`);
       const notes = releaseNotes(root, "v1.1.0", next, "fixture/Piik");
       expect(notes.startsWith(opening)).toBe(true);
@@ -234,9 +244,10 @@ describe("release automation", () => {
     const revision = "a".repeat(40);
     const run = () => spawnSync(process.execPath, [publisher, root, version, revision, "--dry-run"], { encoding: "utf8" });
     try {
-      for (const target of ["server", "server-linux-arm64", "windows-amd64", "linux-amd64", "linux-arm64", "darwin-arm64", "darwin-amd64"]) {
+      for (const target of ["server", "server-linux-arm64", "server-windows-amd64", "windows-amd64", "linux-amd64", "linux-arm64", "darwin-arm64", "darwin-amd64"]) {
         const server = target.startsWith("server");
-        const artifact = `${target}.${server ? "tar.gz" : "zip"}`;
+        const archive = target === "server-windows-amd64" ? "zip" : server ? "tar.gz" : "zip";
+        const artifact = `${target}.${archive}`;
         writeFileSync(join(root, artifact), target);
         const descriptor = { schema: 2, version, revision, artifact, artifactSha256: sha(target),
           target, ...(server ? { manifest: `${target}.manifest.tsv`, manifestSha256: sha("manifest") } : {}) };
@@ -246,8 +257,8 @@ describe("release automation", () => {
       }
       const complete = run();
       expect(complete.status, complete.stderr).toBe(0);
-      expect(JSON.parse(complete.stdout).targets).toHaveLength(7);
-      expect(JSON.parse(complete.stdout).files).toBe(7);
+      expect(JSON.parse(complete.stdout).targets).toHaveLength(8);
+      expect(JSON.parse(complete.stdout).files).toBe(8);
       const checksum = join(root, "windows-amd64.zip.sha256");
       const originalChecksum = readFileSync(checksum, "utf8");
       writeFileSync(checksum, "wrong checksum");

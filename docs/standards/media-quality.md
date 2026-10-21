@@ -11,6 +11,19 @@ contract. [Status](../status.md) indexes delivery and remaining acceptance.
 
 ## Capture And Controls
 
+Room voice handles both Host and Viewer microphones, separate
+from source sound. One Browser capture owner supplies device selection, input
+gain and optional speech processing, including on App-backed pages. Settings
+remain local to the Browser origin; joining and microphone activation are never
+remembered. Stopping picture capture does not stop room voice. Source audio stays
+with the picture; room voice prioritizes interactive latency and is not promised
+to remain synchronized with a delayed picture.
+Microphone gain, master voice listening volume and each person's local volume
+range from 0% to 200%, defaulting to 100%. Master and per-person listening gains
+multiply. Per-person levels belong to the current participant identity and retire
+with it. Listening gain, deafen and per-person mute affect only local playback,
+never forwarding or the picture's source audio.
+
 - The Web Host may share a display, application window, Browser tab or camera and may
   stop, synchronously pause/resume audio and video, or switch source.
 - An App-launched Host explicitly chooses either that Browser capture path or
@@ -20,24 +33,16 @@ contract. [Status](../status.md) indexes delivery and remaining acceptance.
 - Camera is a peer source choice in the same picker, including on phones. Only
   the chosen source requests permission. Camera input and thumbnails request
   an uncropped device format; sender constraints own later scaling.
-  Browser/camera Host microphone capture
-  is explicit and defaults to Browser voice processing, separately from screen audio.
-  The Host may turn that processing off for music or virtual audio inputs;
-  the input change preserves the existing mixed output and leaves the previous
-  input usable on failure. This requests Browser processing settings, not a
-  bypass of device/system effects. Native PCM capture uses device/system settings.
-  The mixer produces one audio output for the existing media routes. Muting or losing the
-  microphone must not stop healthy video. Share retirement releases its devices
-  and rejects late permission results. Native App capture mixes source and
-  microphone PCM before its existing Opus encoder, preserving one output track
-  through mute, pause and source replacement. A capable App/page pair opts into
-  this output at startup; source sound and microphone state remain independent
-  facts. Browser preview audio never becomes the native mixing source.
-- Audio input availability belongs to the Host capture/mixer owner: a live source
-  audio input or an enabled, live Host microphone makes audio available. A retained
-  mixed output track alone does not. This describes input presence, not measured
+  Camera capture does not implicitly open a microphone. Room voice owns speech
+  independently. A microphone device/processing change keeps the previous input
+  on failure and does not replace picture media. Browser processing preferences
+  do not bypass device/system effects. Published Native control commands retain
+  mixed source/commentary support for older Sites; the current UI uses room voice.
+- Source-audio availability belongs to the Host capture owner. A live source
+  input makes source audio available; a retained Native output track alone does
+  not. This describes input presence, not measured
   loudness; quiet content, share pause and Viewer-local mute remain separate facts.
-  Source replacement and microphone changes update this fact without rebuilding
+  Source replacement and source-audio changes update this fact without rebuilding
   the output or media route. An opted-in room session carries it for the current
   publication, including late joins and signaling reconnects.
 - An audio-only update with the same capture video preserves the Browser video

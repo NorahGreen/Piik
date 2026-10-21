@@ -62,7 +62,8 @@ Piik 是一个免费开源的私密屏幕共享工具，适合游戏直播、一
 1. 点击**开始分享**，选择要分享的画面和声音。
 2. 点击**复制邀请链接**，发给朋友。分享期间保持标签页打开。
 
-分享时还可以开启**麦克风**解说，在旁边的设置中选择设备、调整人声音量。
+打开 **互动 → 语音** 即可一起聊天，开播前后都能使用。
+房主开启语音后，大家自行加入收听，想说话时再打开自己的麦克风。
 
 Piik 默认跟随系统语言，中文系统显示简体中文，其他语言显示英文。
 顶部的 **中 / EN / ✦** 可切换中英文或体验纯视觉模式。
@@ -78,7 +79,7 @@ Piik App 可创建本地房间或临时公网邀请，也能在后台为已授�
 | `linux-amd64` | Linux x64 |
 | `linux-arm64` | Linux ARM64 |
 
-[**完整使用教程 →**](./docs/guide/getting-started.zh-CN.md) · [**打开在线版 →**](https://demo.piik.tv)
+[**快速上手 →**](./docs/guide/getting-started.zh-CN.md) · [**问题排查 →**](./docs/guide/troubleshooting.zh-CN.md)
 
 浏览器采集需要 HTTPS 或 `localhost`。目前主要测试 Windows 版 Piik App 和桌面浏览器分享。
 macOS 和 Linux 版 Piik App 仍需更多实机测试，欢迎有设备的朋友试用并[反馈问题](https://github.com/TNTcraftHIM/Piik/issues)。
@@ -98,6 +99,9 @@ Piik Server 是一个内置网页界面的独立程序。
 ```sh
 ./piik-server
 ```
+
+Windows x64 可下载 `piik-<revision>-windows-amd64-runtime.zip`，解压后在 PowerShell
+运行 `./piik-server.exe`；配置方式相同。
 
 打开 `http://localhost:8787` 即可在本机试用。对外提供服务时，
 再配置域名、HTTPS 反向代理和 STUN 地址。房间数据保存在 SQLite 中。

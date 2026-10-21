@@ -15,10 +15,12 @@ function storage() {
 
 it("keeps independent room-tool choices across reads without storing private runtime fields", () => {
   const values = storage();
-  saveRoomPreferences({ pictureFit: "cover", routePreference: "p2p", keyboardPage: "text", combineKeys: true });
-  saveRoomPreferences({ interactionEffects: false, remoteControlMode: "password" });
-  expect(readRoomPreferences()).toMatchObject({ pictureFit: "cover", routePreference: "p2p", keyboardPage: "text",
-    combineKeys: true, interactionEffects: false, remoteControlMode: "password" });
+  saveRoomPreferences({ pictureFit: "cover", pictureRotation: 270, routePreference: "p2p", keyboardPage: "text", combineKeys: true });
+  saveRoomPreferences({ interactionEffects: false, remoteControlMode: "password", remoteReleaseKey: 9, remoteStopKey: 8,
+    voiceListeningVolume: 1.5, voiceInput: { deviceId: "", volume: 2, voiceProcessing: true } });
+  expect(readRoomPreferences()).toMatchObject({ pictureFit: "cover", pictureRotation: 270, routePreference: "p2p", keyboardPage: "text",
+    combineKeys: true, interactionEffects: false, remoteControlMode: "password", remoteReleaseKey: 9, remoteStopKey: 8,
+    voiceListeningVolume: 1.5, voiceInput: { deviceId: "", volume: 2, voiceProcessing: true } });
 
   // Storage accepts only the preference contract, even if a caller supplies a
   // room snapshot with credentials, text or actual held input by mistake.
@@ -31,6 +33,8 @@ it("keeps independent room-tool choices across reads without storing private run
   for (const field of ["password", "grant", "text", "modifiers", "controller"]) expect(saved).not.toHaveProperty(field);
   expect([...values.values()][0]).not.toContain("private");
   expect(readRoomPreferences().pictureFit).toBe("cover");
+  values.set("piik:room-preferences:v1", JSON.stringify({ pictureFit: "cover", pictureRotation: 45 }));
+  expect(readRoomPreferences()).toMatchObject({ pictureFit: "cover", pictureRotation: 0 });
 });
 
 it("rejects malformed saved data and invalid patches while retaining useful defaults", () => {

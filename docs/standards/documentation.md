@@ -26,7 +26,7 @@ verification procedures stay in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 | Compact product map | `docs/project-memory.md` | Stable summaries and domain navigation, not implementation inventories |
 | Current execution/deployment index | `docs/status.md` | Current boundaries and pointers; exact artifact identity stays in release metadata |
 | Remaining work and decisions | `docs/todo.md` | One task ledger, with executable work separated from parked ideas |
-| Unresolved physical acceptance | `docs/verification-status.md` | Still-relevant evidence gaps across modules |
+| Evidence boundaries | `docs/verification-status.md` | Compact limits that affect product claims; no duplicate retest ledger |
 | Completed history | Git commits and PRs | Changes and outcomes; do not reproduce them in memory or TODO |
 
 Source schemas and existing conformance fixtures own exact interface fields;
@@ -35,6 +35,11 @@ links to them instead of copying every field. README and guides explain how to
 use the product; technical details link to the relevant owner. English/Chinese
 entry guides are intentional translations and must change together; technical
 references keep one version.
+
+First-use guides stop at a working room. Detailed controls belong to task guides,
+symptom-based checks to troubleshooting, and build/release procedures to maintainer
+references. Remove repaired incident narratives instead of appending them to the
+reader's path; retain checks for current platform and network limitations.
 
 The public documentation website renders selected repository Markdown without
 owning another copy. Its [reader index](../guide/README.md) serves usage and support;
@@ -64,6 +69,9 @@ checklists as product truth.
 After an audit, put accepted constraints in their existing owners and unresolved
 work in TODO, then remove the report and handoff bundle. Do not create dated
 audit-summary directories or replacement archives of completed work.
+Remove repaired, sufficiently verified work from TODO and compact snapshots.
+An unmatched historical report alone does not create a permanent retest task;
+keep its discussion in the issue and reopen work when new evidence warrants it.
 
 Published copy describes Piik's behavior and design directly. Remove discarded
 design labels, private operational details and conversational comparisons to

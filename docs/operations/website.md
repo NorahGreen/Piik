@@ -108,7 +108,7 @@ bundles. Their HTML references come from the same build, including imported
 dependencies; fixed filenames must not mix a new page with cached old controls
 or styles. Publish the complete output together.
 
-Favicons share the [App artwork and exports](../../cmd/piik-app/README.md#desktop-icons).
+Favicons share the [App artwork and exports](../../cmd/piik-app/DEVELOPMENT.md#desktop-icons).
 The website build copies the public SVG/PNG/ICO assets for the homepage, film
 and documentation, keeping their URLs stable.
 
@@ -161,7 +161,7 @@ native latest-attachment route:
 Both links follow provider publication without a website rebuild. Supported App
 architecture choices stay visible; one selection updates both providers' links.
 An optional GitHub metadata request supplies the latest version/date and its
-authored editorial headline;
+authored editorial title and one-line explanation;
 failure does not disable architecture selection. Without JavaScript, the default
 links remain Windows x64, Apple silicon and Linux x64. Publish a newly listed App
 package before deploying its website option. ARM64 Server packages alone do not

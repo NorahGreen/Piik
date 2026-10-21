@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import type { RemoteControlRequest } from "../../native/wire";
+import type { RemoteControlRequest, RemoteStopShortcut } from "../../native/wire";
 import type { RemoteControlMode, RemoteInputPlatform } from "../../remote-control/protocol";
 import { readRoomPreferences, saveRoomPreferences } from "../../lib/room-preferences";
 import { useCopy } from "../../ui/copy";
@@ -8,16 +8,18 @@ import { Glyph } from "../../ui/icons";
 import { Btn, NameTag, SwitchItem } from "./primitives";
 import { FloatingPanel } from "./FloatingPanel";
 import { Tooltip } from "./Tooltip";
+import { RemoteShortcutSelect } from "./RemoteShortcutSelect";
 import "./remote-control.css";
 
 // Form drafts stay here; the App snapshot owns applied authorization.
-export function HostRemoteControl({ mode, platform, requests, disabled, onPolicy, onDecide }: {
+export function HostRemoteControl({ mode, platform, requests, disabled, onPolicy, onDecide, onShortcut }: {
   mode: RemoteControlMode;
   platform: RemoteInputPlatform;
   requests: (RemoteControlRequest & { name: string })[];
   disabled?: boolean;
   onPolicy: (mode: RemoteControlMode, password?: string) => Promise<void>;
   onDecide: (id: string, allow: boolean) => Promise<void>;
+  onShortcut?: (key?: number) => Promise<RemoteStopShortcut>;
 }) {
   const { t, vis } = useCopy();
   const id = useId();
@@ -33,6 +35,19 @@ export function HostRemoteControl({ mode, platform, requests, disabled, onPolicy
   const busy = pendingActions.size > 0;
   const pending = requests.filter(request => request.state === "pending").length;
   const controller = requests.find(request => request.state !== "pending");
+  const policyAction = mode !== "off" ? "remote.apply" : draft === "room" ? "remote.enableRoom" : "remote.enable";
+  const [shortcut, setShortcut] = useState<RemoteStopShortcut | null>(null);
+  const shortcutUnavailable = mode === "off" && Boolean(onShortcut) && !shortcut?.available;
+  useEffect(() => {
+    if (!open || !onShortcut) return;
+    let current = true;
+    setShortcut(null);
+    // Restore this Site's choice before allowing a new permission request.
+    const key = readRoomPreferences().remoteStopKey;
+    const load = mode === "off" ? onShortcut(key).catch(() => ({ key, available: false })) : onShortcut();
+    void load.then(value => { if (current) setShortcut(value); }, () => { if (current) setShortcut(null); });
+    return () => { current = false; };
+  }, [open, mode, onShortcut]);
   useEffect(() => {
     setDraft(mode === "off" ? readRoomPreferences().remoteControlMode : mode);
     setPassword(""); setPreparing(false);
@@ -56,7 +71,10 @@ export function HostRemoteControl({ mode, platform, requests, disabled, onPolicy
     if (nextMode === "off") setPendingActions(current => {
       const next = new Map(current); next.delete("enable"); return next;
     });
-    return perform(nextMode !== "off" && mode === "off" ? "enable" : "policy", () => onPolicy(nextMode, password));
+    return perform(nextMode !== "off" && mode === "off" ? "enable" : "policy", async () => {
+      try { await onPolicy(nextMode, password); }
+      finally { if (onShortcut) setShortcut(await onShortcut().catch(() => null)); }
+    });
   };
   return <>
     <span className="lr-remote-trigger">
@@ -72,15 +90,17 @@ export function HostRemoteControl({ mode, platform, requests, disabled, onPolicy
         setOpen(opened);
         setSurfaceDocument(owner);
         if (!opened) {
+          setShortcut(null);
           setPassword(""); setPreparing(false);
           setDraft(mode === "off" ? readRoomPreferences().remoteControlMode : mode);
         }
       }}>
       <div className="lr-floating-scroll lr-remote-panel-body">
         <SwitchItem checked={mode !== "off"} label={t("remote.title")} hint="hint-remote-control"
-          disabled={mode === "off" && (busy || disabled)}
+          disabled={mode === "off" && (busy || disabled || shortcutUnavailable)}
           onChange={enabled => {
-            if (enabled && draft === "password" && !password) setPreparing(true);
+            // A remembered automatic grant is not consent for this audience.
+            if (enabled && (draft === "room" || draft === "password" && !password)) setPreparing(true);
             else void applyPolicy(enabled ? draft : "off", enabled && draft === "password" ? password : undefined);
           }} />
         {pendingActions.has("enable") && mode === "off" && <div className="lr-remote-enable-pending" role="status">
@@ -128,18 +148,28 @@ export function HostRemoteControl({ mode, platform, requests, disabled, onPolicy
               disabled={busy || disabled} onChange={event => setPassword(event.target.value)} />
           </label>}
           {(draft !== mode || draft === "password") && <div className="lr-remote-policy-actions">
-            {preparing && !busy && <Btn icon="x" title="common.cancel" cap="common.cancel" size="compact" onClick={() => {
+            {preparing && !busy && <Btn icon="x" title="common.cancel" cap="common.cancel" size="compact" hint="hint-close" onClick={() => {
               setPreparing(false); setPassword(""); setDraft(readRoomPreferences().remoteControlMode);
               (surfaceDocument ?? document).getElementById(id)?.querySelector<HTMLButtonElement>('[role="switch"]')?.focus();
             }} />}
-            <Btn icon="check" title="remote.apply" cap="remote.apply" type="submit" tone="primary" size="compact"
-              hint="hint-remote-control" disabled={busy || disabled || (draft === "password" && !password)} />
+            <Btn icon="check" title={policyAction} cap={policyAction}
+              type="submit" tone="primary" size="compact" hint="hint-remote-control" hintText={`remote.help.${draft}`}
+              disabled={busy || disabled || shortcutUnavailable || (draft === "password" && !password)} />
           </div>}
         </form>}
         {failedId === "policy" && <p role="alert"><Glyph name="alert" size={14} />
           <span className={vis ? "visually-hidden" : undefined}>{t(platform === "darwin" && mode === "off" ? "remote.macPermission" : "remote.decisionFailed")}</span></p>}
         {!vis && <p className="lr-remote-note">{t(platform === "linux" && mode === "off" ? "remote.linuxEnable" : "remote.policyLifetime")}</p>}
-        {(mode === "room" || mode === "password" || requests.some(request => request.state !== "pending")) && <p className="lr-remote-note">
+        {onShortcut && shortcut && <>
+          <RemoteShortcutSelect host mac={platform === "darwin"} value={shortcut.key} disabled={busy || disabled}
+            onChange={key => void perform("shortcut", async () => {
+              setShortcut(await onShortcut(key));
+              saveRoomPreferences({ remoteStopKey: key });
+            })} />
+          {(!shortcut.available || failedId === "shortcut") && <p role="alert"><Glyph name="alert" size={14} />
+            <span className={vis ? "visually-hidden" : undefined}>{t("remote.shortcutFailed")}</span></p>}
+        </>}
+        {!onShortcut && (mode === "room" || mode === "password" || requests.some(request => request.state !== "pending")) && <p className="lr-remote-note">
           {platform === "linux" ? <><Glyph name="mouse" size={14} /> <span className={vis ? "visually-hidden" : undefined}>{t("remote.linuxStop")}</span></>
             : <>{vis ? <Glyph name="keyboard" size={14} /> : t("remote.shortcut")} <kbd>{platform === "darwin" ? "Ctrl + Option + F10" : "Ctrl + Alt + F10"}</kbd></>}
         </p>}

@@ -3,6 +3,7 @@
 package config
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"math"
@@ -78,6 +79,8 @@ type Config struct {
 	Port          int
 	ListenHost    string
 	PublicBaseURL *url.URL
+	// TLS is optional direct HTTPS. Reverse-proxy deployments leave it nil.
+	TLS *tls.Config
 	// AllowedOrigins is a membership test only; map order is not observable.
 	AllowedOrigins            map[string]struct{}
 	SiteAccessPassword        string
@@ -87,8 +90,8 @@ type Config struct {
 	EndpointMediaCopyCapacity int
 	SFU                       *SFUConfig
 	STUNURLs                  []string
-	// STUNListenAddresses is populated only by Hosted configuration. Local
-	// discovery URLs do not make the Client an externally reachable STUN server.
+	// STUNListenAddresses belongs to the application lifecycle. Pure LAN binds
+	// its selected interface; public-link discovery URLs never create listeners.
 	STUNListenAddresses  []string
 	NATPredictionEnabled bool
 	// NATPredictionSTUNURLs is nil when unset, which IceConfig distinguishes
@@ -200,12 +203,17 @@ func Load(env map[string]string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	transportTLS, err := loadTLS(env, publicBaseURL)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		Env:                       environment,
 		Port:                      int(port),
 		ListenHost:                listenHost,
 		PublicBaseURL:             publicBaseURL,
+		TLS:                       transportTLS,
 		AllowedOrigins:            allowedOrigins,
 		SiteAccessPassword:        siteAccessPassword,
 		RoomDatabasePath:          roomDatabasePath,

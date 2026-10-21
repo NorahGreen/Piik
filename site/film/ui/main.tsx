@@ -15,8 +15,7 @@ import {
 import { CaptureSourcePicker } from "../../../src/client/components/living/CaptureSourcePicker";
 import { RoomInteractions } from "../../../src/client/components/living/RoomInteractions";
 import { RoomInteractionSession } from "../../../src/client/lib/room-interactions";
-import { RoomChatOverlaySettings, RoomChatToggle } from "../../../src/client/components/living/RoomChatOverlay";
-import { HostMicrophone } from "../../../src/client/components/living/HostMicrophone";
+import { RoomChatToggle } from "../../../src/client/components/living/RoomChatOverlay";
 import { HostShareControls } from "../../../src/client/components/living/HostShareControls";
 import { PlaybackControlsView } from "../../../src/client/components/living/PlaybackControls";
 import { StatusIndicator } from "../../../src/client/components/living/StatusIndicator";
@@ -236,7 +235,7 @@ function Screen({ shot }: { shot: Shot }) {
                 picture={{ supported: true, active: false, failed: false, toggle: async () => {} }}
                 togglePlayback={noop} toggleFullscreen={noop} toggleMute={noop} setLevel={noop}
                 onToggleTheater={noop} onReconnect={noop} reconnectAvailable
-                overlayAction={<RoomChatToggle session={session} />} overlaySettings={<RoomChatOverlaySettings session={session} />} />}
+                overlayAction={<RoomChatToggle session={session} />} />}
               {shot === "picker" && (
                 <CaptureSourcePicker
                   nativeSources={{
@@ -280,7 +279,6 @@ function Screen({ shot }: { shot: Shot }) {
               )}
             </StageTv>
             {!viewer && <HostShareControls actions={live ? <>
-              <HostMicrophone enabled={false} volume={1} onToggle={noop} />
                 <Btn icon="switchSource" cap="host.switchSource" title="host.switchSource" hint="hint-switch-source" />
               </> : null}
               settings={<Btn icon="sliders" cap="host.settings.button" title="host.advanced" hint="hint-advanced" expanded={false} />}
@@ -320,7 +318,7 @@ function Screen({ shot }: { shot: Shot }) {
                   <Btn icon="pencil" cap="common.edit" title="host.nameEdit" hint="hint-rename" />
                 </div>
                 <div className={`lr-row-group lr-group-actions ${viewer ? "lr-viewer-actions-slot" : "lr-host-diagnostics-slot"}`}>
-                  <Btn icon="gauge" cap="host.details" title="host.details" hint="hint-details" disabled={!live} />
+                  <Btn icon="gauge" cap="host.details" title="host.details.show" hint="hint-details" disabled={!live} />
                   <Btn icon="network" cap="host.topology" title="host.topology.show" hint="hint-topology" />
                 </div>
               </div>

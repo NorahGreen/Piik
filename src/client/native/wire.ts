@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { remoteControlModeSchema, remoteInputPlatformSchema } from "../remote-control/protocol";
+import { remoteControlModeSchema, remoteInputPlatformSchema, remoteShortcutKeySchema } from "../remote-control/protocol";
 import { sfuMediaSchema, positiveUint32Schema, qualityResolutionSchema, punchPredictionSchema,
   nullableSafeEvidenceNumber, nullableSafeEvidenceInteger } from "../../shared/protocol";
 
@@ -42,7 +42,9 @@ export const nativeHealthSchema = nativeDiscoveryIdentitySchema.extend({
       maxVideoFramerate: z.number().positive().max(Number.MAX_SAFE_INTEGER).optional(),
       maxVideoBitrate: positiveUint32Schema.optional(),
       receiverReuse: z.boolean().default(false),
+      maxRelayChildren: z.number().int().min(1).max(20).optional(),
       remoteInput: z.boolean().optional(),
+      remoteStopShortcut: z.boolean().optional(),
       video: z.boolean().default(false),
       processAudio: z.boolean().default(false),
       systemAudio: z.boolean().default(false),
@@ -56,6 +58,12 @@ export const nativeHealthSchema = nativeDiscoveryIdentitySchema.extend({
     .prefault({}),
 });
 export type NativeHealth = z.infer<typeof nativeHealthSchema>;
+
+// Native receiver lifetime uses the selected backend's physical capability;
+// room authority independently limits admitted children until the user opts in.
+export function nativeRelayCapacity(capacity: number, health?: Pick<NativeHealth, "nativeMedia">): number {
+  return Math.min(capacity, health?.nativeMedia.maxRelayChildren ?? 3);
+}
 
 export const nativeConnectSchema = nativeDiscoveryIdentitySchema.extend({
   protocol: z.literal(NATIVE_CLIENT_PROTOCOL),
@@ -126,6 +134,10 @@ const responseBase = {
   version: z.literal(NATIVE_CLIENT_PROTOCOL),
   id: opaqueIdentifierSchema,
 };
+
+export const remoteStopShortcutSchema = z.object({ key: remoteShortcutKeySchema, available: z.boolean() });
+export type RemoteStopShortcut = z.infer<typeof remoteStopShortcutSchema>;
+export const remoteStopShortcutResponseSchema = remoteStopShortcutSchema.extend({ ...responseBase, type: z.literal("remote-stop-shortcut") }).strict();
 
 export const punchPreparedResponseSchema = z.object({
   ...responseBase, type: z.literal("punch-prepared"), prediction: punchPredictionSchema.nullable(),

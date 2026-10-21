@@ -7,7 +7,7 @@
 // by the tsx preview harness, which uses the classic JSX runtime.
 
 import { createElement, memo, type CSSProperties } from "react";
-import type { HintKind, HintScene, MetricHintKind, InteractionHintKind, RemoteHintKind } from "../../../ui/visual-kinds";
+import type { HintKind, HintScene, MetricHintKind, InteractionHintKind, RemoteHintKind, VoiceHintKind } from "../../../ui/visual-kinds";
 import { SET1_SCENES } from "./set1";
 import { SET2_SCENES } from "./set2";
 import { SET3_SCENES } from "./set3";
@@ -18,6 +18,8 @@ import { METRIC_SCENES } from "./metrics";
 import { ADMISSION_SCENES } from "./admission";
 import { INTERACTION_SCENES } from "./interactions";
 import { REMOTE_SCENES } from "./remote-control";
+import { RELAY_SCENES } from "./relay";
+import { VOICE_SCENES } from "./voice";
 import { comicStyle, getComicPresentation, type ComicTone, type ComicMotion } from "../comic-presentation";
 
 export type { HintKind, HintScene };
@@ -26,6 +28,7 @@ export const HINT_KINDS: readonly HintKind[] = [
   "hint-fit-contain",
   "hint-fit-cover",
   "hint-fit-fill",
+  "hint-picture-rotation",
   "hint-share-start",
   "hint-share-stop",
   "hint-microphone-on",
@@ -43,6 +46,7 @@ export const HINT_KINDS: readonly HintKind[] = [
   "hint-reconnect",
   "hint-copy-code",
   "hint-shuffle-code",
+  "hint-create-room",
   "hint-copy-invite",
   "hint-invite-link",
   "hint-client-link",
@@ -82,10 +86,12 @@ export const HINT_KINDS: readonly HintKind[] = [
   "hint-join-go",
   "hint-theater",
   "hint-theater-exit",
+  "hint-route-auto",
   "hint-route-p2p",
   "hint-route-p2p-required",
   "hint-route-sfu-required",
   "hint-route-sfu",
+  "hint-relay-volunteer",
   "hint-client-local",
   "hint-app-ready",
   "hint-client-site",
@@ -109,6 +115,7 @@ export const HINT_KINDS: readonly HintKind[] = [
   ...Object.keys(METRIC_SCENES) as MetricHintKind[],
   ...Object.keys(INTERACTION_SCENES) as InteractionHintKind[],
   ...Object.keys(REMOTE_SCENES) as RemoteHintKind[],
+  ...Object.keys(VOICE_SCENES) as VoiceHintKind[],
 ];
 
 export const HINT_SCENES: Record<HintKind, HintScene> = {
@@ -122,6 +129,8 @@ export const HINT_SCENES: Record<HintKind, HintScene> = {
   ...ADMISSION_SCENES,
   ...INTERACTION_SCENES,
   ...REMOTE_SCENES,
+  ...RELAY_SCENES,
+  ...VOICE_SCENES,
 };
 
 const HINT_KIND_SET: ReadonlySet<string> = new Set(HINT_KINDS);

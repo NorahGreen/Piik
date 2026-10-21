@@ -19,14 +19,34 @@ function LcdDigits({ code }: { code: string }) {
   );
 }
 
-export function RoomCodePlaceholder() {
-  const { t } = useCopy();
+export function RoomCodePlaceholder({ onCreate, disabled, busy }: {
+  onCreate?: () => void;
+  disabled?: boolean;
+  busy?: boolean;
+}) {
+  const { t, vis } = useCopy();
+  const contents = <>
+    <LcdDigits code="----" />
+    <span className="lr-lcd-action" aria-hidden="true">
+      <Glyph name={onCreate ? busy ? "loader" : "plus" : "copy"} size={16}
+        className={busy ? "lr-spin" : undefined} />
+    </span>
+  </>;
+  if (onCreate) return (
+    <Tooltip kind="hint-create-room" text={vis ? undefined : t("host.createRoomHint")}>
+      <button type="button" className="lr-lcd is-empty is-create"
+        aria-label={t("host.createRoom")} aria-busy={busy || undefined} disabled={disabled}
+        onClick={event => {
+          onCreate();
+          if (event.detail !== 0) event.currentTarget.blur();
+        }}>
+        {contents}
+      </button>
+    </Tooltip>
+  );
   return (
     <span className="lr-lcd is-empty" role="img" aria-label={t("host.roomCodePending")}>
-      <LcdDigits code="----" />
-      <span className="lr-lcd-copy-placeholder" aria-hidden="true">
-        <Glyph name="copy" size={16} />
-      </span>
+      {contents}
     </span>
   );
 }

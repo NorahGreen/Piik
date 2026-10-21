@@ -27,6 +27,10 @@ valuable. Duplicate work already independently resolved, personal preferences or
 low-value changes may be declined; merging is not an attribution mechanism.
 Retain authorship for accepted contributions and credit substantive discoveries
 accurately, without attributing independently written code to a PR author.
+Keep contributor patch commits limited to their necessary changes; put maintainer
+adaptations and unrelated work in separate commits. Preserve a useful original
+patch commit at integration instead of adding its author as co-author of an
+entire phase's squash commit.
 评审看实际价值、证据和产品定位，不看代码行数。发现并解决真实问题的小修复同样值得接纳；
 已经独立解决的重复工作、个人偏好或收益很低的改动可以不合并，不为增加贡献者名单而合并。
 保留已接纳贡献的作者信息，如实说明有价值的问题发现；独立编写的代码不应冒记为他人共同编写。
@@ -134,6 +138,11 @@ does not establish coverage.
   result. A manual diagnostic may locate a failure, but is not retained as pass
   evidence. Existing `PIIK_CLIENT_*` gate environment names retain their current
   contract; renaming the tools does not change those overrides.
+- `gate:room-voice` exercises normal Host/Viewer pages against a local production
+  server with real fake-device capture. Set `PIIK_ROOM_VOICE_GATE=true`,
+  `CHROME_PATH` and `PIIK_SERVER_EXE`; repeat with `PIIK_ROOM_VOICE_SFU=true`
+  for embedded SFU. Requires `agent-browser` (or `AGENT_BROWSER_PATH`). Reports
+  and screenshots stay under ignored `build/voice-integration`.
 - `gate:network-lab` runs the opt-in [controlled network laboratory](./docs/research/network-lab.md).
   It requires a disposable Linux runner with namespace administration. Its own
   routers contain all firewall and traffic-shaping changes; do not run it on a

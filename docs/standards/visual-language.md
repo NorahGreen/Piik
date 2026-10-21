@@ -79,6 +79,7 @@ permissions and window chrome are verified in the actual platform, not imitated.
 | Switch related content pages | A named tablist with one selected tab and its associated panel; use the shared sliding treatment for short labels, including capture categories, and `navigateTabs` for Arrow/Home/End navigation |
 | Pick a device or an item from a variable list | Existing named selector/menu; use source thumbnails when appearance helps identify the item |
 | Adjust a numeric value | Range slider for quick adjustment, with a visible value; reuse `QualityNumberControl` when exact entry or a wider accepted range is useful |
+| Return within a room tool | Shared `BackButton`: left arrow and **Back**, with the same quiet dense treatment in settings and expanded reactions |
 | Apply several settings together | A named preset tile/chip; allow no preset to be selected when the current values are custom |
 
 Selection, expansion and pending operations describe different facts. Use the
@@ -128,11 +129,19 @@ that every popup should acquire.
 | Keep a room tool available while watching or working | `FloatingPanel`, as used for interactions and Host remote permissions; retain its position without reflowing the room |
 | Use a tool outside the page | Optional `usePanelWindow` on capable browsers; reuse the same content/session, as with interactions, remote permissions and the docked remote keyboard |
 
+Chat and voice share one settings entry beside their tabs. Returning from either
+settings page or an expanded reaction palette uses `BackButton`, not a destination
+name or content icon. Audio icons keep their direct microphone/listening toggle;
+`AudioVolumeMenu` exposes the shared volume slider on mouse hover, keyboard focus
+or touch hold. It uses the guidance timing constants and anchored popover owner,
+replaces a hint with an actual control, and never widens the participant row.
+Settings remain an explicit touch entry for microphone and master volume.
+
 Persistent room utilities use the shared floating panel without reflowing the
 living room. The shell owns visibility, focus return, movement, resizing and
 viewport/keyboard bounds; contents retain their domain state. Support title-bar
 dragging, corner resizing and equivalent keyboard controls without a second
-placement menu. An interaction palette starts beside its chosen
+placement menu. The couch's full interaction palette starts beside its chosen
 participant, stays open after sending and keeps its position when retargeted.
 One-shot settings and guidance retain their existing disclosures. Anchored
 menus use native popovers and shared viewport placement; a small parent panel
@@ -141,13 +150,16 @@ platform polyfill installed before UI mounting; controls retain the same
 visibility, focus and dismissal contract. Escape closes
 inner guidance first, then the most recently opened floating panel, then theater
 mode; an IME composition must not dismiss these surfaces.
-The interaction window gives conversation the main space and keeps one stable
-composer. Its reaction entry or a current participant's message avatar reveals
-the same compact recipient strip and shared palette above the input. The tray
-takes space from the scrollable message list without covering it; neither a
-permanent roster nor a second target heading competes with messages. More
-recipients scroll within that strip. Keep the composer in place while picking,
-and preserve the draft and reading position.
+The interaction window keeps its conversation and composer available while
+reacting. A current participant's message avatar or voice avatar opens a small
+attached palette with thumbs up/down and the two throwing props; one's own
+entry uses laugh and heart in place of throws. Throwing props keep the full
+palette's distinct card styling; compact buttons omit captions. More reactions expands
+the same curated choices on demand, with a labelled back arrow in the heading.
+Do not add a second roster or reflow the list. The native
+popover owns outside-click and Escape dismissal; sending keeps it open for
+repeated interaction. The couch retains its movable full palette. Both surfaces
+reuse target identity, reaction buttons and the existing send owner.
 Live reactions can appear briefly in the conversation surface without moving its
 layout. Retention and export details belong in settings, not beside every entry.
 Detachable tools reuse the same content in the browser's own always-on-top frame.
@@ -244,7 +256,9 @@ the colour, outline and selected position without decorative displacement.
 The shared button uses the same pressed value for `aria-pressed` and its selected
 treatment; active state remains distinct from hover in both themes.
 Disclosure buttons keep a stable visible caption, while their expanded state and
-accessible action describe opening or closing. Neutral panel borders stay quieter
+accessible action describe opening or closing. Related tool captions use the same
+grammatical form: name the feature rather than mixing feature names with instructions
+to show them. Neutral panel borders stay quieter
 than the controls inside them; nested diagnostic panels retain their softer fill.
 Keep room identity, invitation and admission controls ahead of expanded topology
 and connection details, so inspecting a route does not displace room actions.
@@ -267,7 +281,8 @@ One inline settings panel uses picture and sound tabs with the shared sliding
 two-option control. Picture presets lead; a fine-tuning disclosure contains
 picture limits, preference and video encoding, keeping configured limits visible
 when closed. In sound,
-source and microphone inputs precede the mixed output's audio quality. Presets
+source-audio inputs precede source-audio quality; room microphone settings stay
+in the voice panel. Presets
 remain available before sharing starts. Switching tabs does not reset values
 or restart media. Keep the less frequent connection options in a shared
 disclosure below the tabs. Expand in page flow, pushing later content down
@@ -281,8 +296,13 @@ common step is an explicit action; rendering, focus or reopening never changes
 the value. Derive this presentation from the current value, without a second
 setting mode. Shared presentation stays separate
 from the existing setting/resource owners.
-The microphone comic depicts Host commentary gain;
+The microphone comic depicts microphone input gain;
 the Viewer's listening-volume comic remains a different action.
+Room voice retains one bottom toolbar: open/join and close/leave share its right
+action position; microphone and listening controls appear to the left after
+joining. Use the shared media-control styling for both states. Missing browser
+microphone capability disables capture with a contextual explanation, without
+disabling listening.
 
 The Viewer bar groups local play/volume/overlay, remote mouse/keyboard, then
 settings/display modes, with fullscreen at the outer edge. Quiet dividers mark
@@ -294,8 +314,10 @@ Remote input keeps its own clicks. When controls hide during remote input,
 retain a local pull on the TV bezel, away from the status lamp. Theater and
 fullscreen place it at the screen edge. Ordinary viewing reveals controls on
 mouse movement or a touch tap on the picture, without another button or setting.
-Keep the chat-overlay toggle in the bar; its appearance settings also belong in
-playback settings and reuse the interaction window's controls and local owner.
+Keep the chat-overlay toggle in the bar. Its text size and opacity have one
+entry in interaction settings for both Host and Viewers; playback settings own
+local picture display and connection preferences. Microphone settings belong
+to the voice page. All entries retain their existing local setting owner.
 Shorten the volume slider before moving display modes into settings; keep the
 bar on one line at supported mobile widths.
 Viewer settings use a brief anchored popover, preferring space below the picture
@@ -350,8 +372,9 @@ changing the badge does not restyle the UI, wordmark or illustrations.
 | Shared or watched media | Small television, including antenna, body and feet |
 | Browser application | Browser chrome around content; not a second design of television |
 | A captured window or display | Window title bar or display stand, with the shared media metaphor kept distinct |
-| A camera source or Host commentary | `camera` identifies the alternative picture source; `microphone` identifies the enabled Host voice input and `microphoneOff` its muted state. Neither replaces the speaker metaphor for source/playback sound. |
+| A camera source | `camera` identifies the alternative picture source. Source/playback sound retains the speaker metaphor. |
 | Room text and reactions | `chat` opens the conversation, `danmaku` controls its optional picture overlay, `smile` identifies reactions and `send` submits the chosen content. These do not represent media transport or voice. |
+| Room voice | `microphone` / `microphoneOff` identify input state; `headphones` / `headphonesOff` pause or resume room-voice listening, while `speaker` / `speakerOff` mute one person locally. Input, playback and forwarding remain independent. Toggle names stay fixed. The microphone's green fill shows measured input after gain, not the configured gain percentage. Participant microphone state stays visible; measured speech changes only the green dot and accessible speaking description, without replacing the visible status text. An enabled input alone is not speaking evidence. Opening the channel and opening a microphone stay separate actions. The Host has labelled open/close-room actions, with `stop` and danger styling for closing everyone's voice; a Viewer's `door` leaves only their own voice participation. Joined membership does not use a network-strength symbol. |
 | Experimental attended desktop control | `mouse` identifies keyboard/mouse control, distinct from sharing or playback. Permission copy stays literal; an active control marker describes the grant, not media connectivity. |
 | Floating utility placement | `grip` marks a draggable title bar; corner handles resize the window. Closing a panel hides its presentation, not its room session. |
 | Server forwarding media | A server on the media path; opening a Site alone does not imply SFU |
@@ -421,6 +444,7 @@ type checking rather than silently render a warning triangle.
 | Meaning / 含义 | Symbols | Use and boundary |
 | --- | --- | --- |
 | Participants and room / 人与房间 | `users`, `couch`, `door` | People, shared room, room entry. Use the shared pawn for a person and `HostMark` for Host authority. |
+| Create / 创建 | `plus` | Create the named object. An empty room-code frame uses this action before the room exists; the resulting code replaces it in place. |
 | Shared screen / 共享画面 | `tv`, `MiniTv`, 📺 | Media or its sharing source. The TV beside the Host name identifies the source; the crown on a person identifies the role. |
 | Start and choose a source / 分享与选源 | `cast`, `share`, `switchSource` | Start sharing, capture a screen, replace the current capture source respectively. A captured window keeps window chrome or a display stand. |
 | Capture source / 采集来源 | `window`, `display` | An application window or a whole display; these nouns remain distinct from the source-switch action. |
@@ -429,13 +453,13 @@ type checking rather than silently render a warning triangle.
 | Restriction / 受限 | `lock` | Restricted entry, concealed password or a setting fixed by availability; show the affected object. A lock never promises anonymity or secure media. |
 | Site and public entry / 站点与公开入口 | `globe` | Browser/Site entry or code-based public entry. It does not claim internet reachability. |
 | Preferred destination / 默认去处 | `star` | A user-selected default, such as the App's startup Site. It is a preference, not authorization or connection health. |
-| Connections / 连接 | `network`, `branch`, `signal`, `wifiOff`, `server` | Topology, branching, signaling, disconnected signaling and the named server. A server on a media path means forwarding; a Site backend or control-link server alone does not imply SFU. An invitation chain does not represent signaling. |
+| Connections / 连接 | `network`, `branch`, `signal`, `wifiOff`, `server` | Topology, branching, signaling, disconnected signaling and the named server. The header's rising bars show only signaling state: three steady green for connected, two animated yellow for connecting/recovering, all grey for offline. Active bars have equal brightness; this is neither a signal-strength measurement nor a media-quality claim. The television lamp owns sharing/viewing state. A server on a media path means forwarding; a Site backend or control-link server alone does not imply SFU. An invitation chain does not represent signaling. |
 | Playback / 播放 | `play`, `pause`, `stop` | Play/resume, pause, end. The control label states whether it affects local viewing or the Host's share. Stop is distinct from a paused or idle room. |
 | Audio / 声音 | `speaker`, `speakerOff` | Audio and mute/no audio, qualified by the source or local playback label. A source track's presence does not establish delivered sound. |
-| Size and viewing mode / 尺寸与观看模式 | `expand`, `contract`, `pip`, `pipExit`, `theater`, `theaterExit`, `fitContain`, `fitCover`, `fitStretch` | Expand/restore, enter/leave picture in picture or theatre mode; contain, proportional crop and stretch change only local picture fit. The same size symbol can accompany a resolution measurement. |
+| Size and viewing mode / 尺寸与观看模式 | `expand`, `contract`, `pip`, `pipExit`, `theater`, `theaterExit`, `fitContain`, `fitCover`, `fitStretch`, `rotatePicture` | Expand/restore, enter/leave picture in picture or theatre mode; contain, proportional crop and stretch change only local picture fit. Picture rotation switches the local landscape/portrait view. The same size symbol can accompany a resolution measurement. |
 | Local actions / 本地操作 | `copy`, `save`, `pencil`, `eye`, `eyeOff` | Copy, save, edit, reveal and conceal the named object. An action icon does not prove completion. |
 | Text appearance / 文字外观 | `textSize`, `opacity` | Relative text size and opacity. These are local display preferences, not message delivery states. |
-| Repeat and disclosure / 重试与展开 | `refresh`, `chevron`, `arrowRight` | Repeat/refresh, expand/collapse, proceed/enter. Direction follows the control's action; no arrow alone establishes delivery. |
+| Repeat and disclosure / 重试与展开 | `refresh`, `chevron`, `arrowRight`, `arrowLeft` | Repeat/refresh, expand/collapse, proceed/enter and return. Direction follows the control's action; no arrow alone establishes delivery. |
 | Transfer and upgrade / 传输与更新 | `arrowUp`, `arrowDown` | Outbound/inbound or upload/download, qualified by the adjacent label. An explicit update label may use the upward arrow for upgrade; neither arrow is a connection-quality rating. |
 | Diagnostics / 诊断 | `cpu` | Technical diagnostics in the labelled diagnostic control; in metrics the same processor identifies encoding work. The surrounding control or measured field states the scope. |
 | Help / 帮助 | `help`, `book` | Open product help or read a guide, respectively; current build identity belongs with this low-frequency information, separate from media settings and App connection state. |

@@ -18,6 +18,7 @@ import {
   captureOptionsResponseSchema,
   edgeOfferResponseSchema,
   nativeAckResponseSchema,
+  remoteStopShortcutResponseSchema,
   nativeEventSchema,
   nativeDiscoveryIdentitySchema,
   nativeConnectSchema,
@@ -45,6 +46,7 @@ import {
   type NativeCaptureTarget,
   type NativeIceCandidate,
   type NativeVideoCodec,
+  type RemoteStopShortcut,
 } from "./wire";
 
 const REQUEST_TIMEOUT_MS = 8_000;
@@ -338,6 +340,7 @@ export class NativeClient {
       {
         ...shareInput,
         ...(excludeAudio ? { excludeAudio } : {}),
+        // Keep a stable output for source-audio toggles during sharing.
         ...(this.health.nativeMedia.microphone ? { microphoneMixing: true } : {}),
         ...(this.health.nativeMedia.remoteInput ? { remoteInput: true } : {}),
         ...(this.health.nativeMedia.captureBorderControl ? { showCaptureBorder } : {}),
@@ -707,6 +710,12 @@ export class NativeClient {
 
   async setRemoteControlPolicy(shareId: string, mode: RemoteControlMode, password?: string): Promise<void> {
     await this.request("set-remote-control-policy", { shareId, mode, ...(password !== undefined ? { password } : {}) }, nativeAckResponseSchema, null);
+  }
+
+  async remoteStopShortcut(shareId: string, key?: number): Promise<RemoteStopShortcut> {
+    if (!this.health.nativeMedia.remoteStopShortcut) throw new Error("Piik App shortcut settings are unavailable");
+    return this.request(key === undefined ? "get-remote-stop-shortcut" : "set-remote-stop-shortcut",
+      { shareId, ...(key === undefined ? {} : { key }) }, remoteStopShortcutResponseSchema);
   }
 
   async setRemoteInputPeers(shareId: string, peers: { peerId: string; endpointId: string; secret: string }[]): Promise<void> {

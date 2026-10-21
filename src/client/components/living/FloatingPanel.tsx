@@ -120,8 +120,8 @@ export function FloatingPanel({ id, trigger, title, icon, compact = false, ancho
       const preferredHeight = preferredSize.current.height;
       panel.style.height = preferredHeight === undefined ? "auto" : `${Math.min(preferredHeight, maxHeight)}px`;
       const freeX = Math.max(0, maxWidth - panel.offsetWidth), freeY = Math.max(0, maxHeight - panel.offsetHeight);
-      // Keep the chosen relative position when the keyboard or viewport changes.
-      // Only deliberate movement writes it; a narrow viewport must not erase it.
+      // Coordinates preserve the chosen corner after movement or content changes;
+      // a viewport-only resize retains the stored relative position.
       if (point) {
         if (freeX) position.current.x = Math.max(0, Math.min(1, (point.x - left) / freeX));
         if (freeY) position.current.y = Math.max(0, Math.min(1, (point.y - top) / freeY));
@@ -144,8 +144,9 @@ export function FloatingPanel({ id, trigger, title, icon, compact = false, ancho
     viewport?.addEventListener("resize", resize);
     viewport?.addEventListener("scroll", resize);
     window.addEventListener("resize", resize);
-    // Content-sized palettes still fit after a target, language or status change.
-    const observer = new ResizeObserver(resize);
+    // Content changes keep the chosen top-left corner; viewport changes above
+    // retain relative placement. Both still constrain the panel to the viewport.
+    const observer = new ResizeObserver(() => place({ x: panel.offsetLeft, y: panel.offsetTop }));
     observer.observe(panel);
     return () => {
       placePanel.current = null;

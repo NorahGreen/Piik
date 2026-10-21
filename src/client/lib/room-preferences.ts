@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { viewerRoutePreferenceSchema } from "../../shared/protocol";
-import { remoteControlModeSchema } from "../remote-control/protocol";
+import { remoteControlModeSchema, remoteShortcutKeySchema } from "../remote-control/protocol";
 
 const STORAGE_KEY = "piik:room-preferences:v1";
 export const CHAT_OVERLAY_LIMITS = { scale: [.8, 1.3], opacity: [.4, 1] } as const;
@@ -8,6 +8,7 @@ export const REMOTE_KEYBOARD_PAGES = ["letters", "symbols", "functions", "text"]
 
 const roomPreferencesSchema = z.object({
   pictureFit: z.enum(["contain", "cover", "fill"]).default("contain"),
+  pictureRotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).catch(0).default(0),
   routePreference: viewerRoutePreferenceSchema.default("auto"),
   overlayEnabled: z.boolean().default(false),
   overlayAppearance: z.object({
@@ -15,8 +16,13 @@ const roomPreferencesSchema = z.object({
     opacity: z.number().min(CHAT_OVERLAY_LIMITS.opacity[0]).max(CHAT_OVERLAY_LIMITS.opacity[1]),
   }).default({ scale: 1, opacity: 1 }),
   interactionEffects: z.boolean().default(true),
+  voiceInput: z.object({ deviceId: z.string(), volume: z.number().min(0).max(2), voiceProcessing: z.boolean() })
+    .default({ deviceId: "", volume: 1, voiceProcessing: true }),
+  voiceListeningVolume: z.number().min(0).max(2).default(1),
   keyboardPage: z.enum(REMOTE_KEYBOARD_PAGES).default("letters"),
   combineKeys: z.boolean().default(false),
+  remoteReleaseKey: remoteShortcutKeySchema.default(10),
+  remoteStopKey: remoteShortcutKeySchema.default(10),
   remoteControlMode: remoteControlModeSchema.exclude(["off"]).default("ask"),
 });
 export type RoomPreferences = z.infer<typeof roomPreferencesSchema>;

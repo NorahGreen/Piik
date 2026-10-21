@@ -26,8 +26,9 @@ desktop and mobile viewports.
 
 Personal room-tool presentation and incoming-route preferences are remembered
 within the same Browser origin across rooms and reloads. Their existing domain
-owners still apply capability and room-policy constraints. Restoring preferences
-never restores room admission, control grants, actual held input, passwords or
+owners still apply capability and room-policy constraints. Remote-control
+shortcut choices follow this same boundary; App applies them only in memory.
+Restoring preferences never restores room admission, control grants, actual held input, passwords or
 message drafts, and never starts capture or remote control.
 
 A capable, opted-in authenticated room session
@@ -39,6 +40,14 @@ That retirement cannot wait for the denied page to unmount. Connected Viewers ma
 is absent, provided the room service and their admitted sessions remain available.
 [Rooms and access](./rooms-access.md#room-interactions) owns interaction authority
 and retention; [status](../status.md#accepted-interaction-phase) owns release readiness.
+
+The Host can explicitly **Create room** before sharing.
+Chat and voice use tabs in the existing interaction window, including its
+detached presentation. Closing or changing that window does not leave voice or
+stop capture. Microphone, admission and connection states stay literal; an
+enabled microphone is not proof that someone is speaking. The
+[room voice contract](./rooms-access.md#room-voice) owns channel activation and
+membership, independently of the window and picture publication.
 
 On capable desktop browsers, the interaction window can move to a Document
 Picture-in-Picture window. It retains the admitted room session's messages,
@@ -166,7 +175,10 @@ Viewer playback settings reuse shared controls in an anchored popover;
 placement follows the [visual language](./visual-language.md) without resizing video. Local picture
 fit defaults to contain; cover preserves proportions and may crop edges, while
 stretch fills the player by changing proportions. These choices do not change
-capture or encoding. Remote input and magnification use the same rendered
+capture or encoding. Manual quarter-turn rotation is another local picture
+preference; it does not depend on device auto-rotation and applies to page
+playback, including theater and DOM fullscreen. System video presentations
+retain their browser-owned behavior. Remote input and magnification use the same rendered
 picture geometry. Incoming-route choice follows the
 [routing contract](./routing-transport.md#viewer-route-choice); its selected value
 is server-acknowledged intent, not evidence of the currently playing route.
@@ -200,10 +212,10 @@ keyboard shortcut own that action. Desktop double-click toggles the available
 fullscreen action. Remote-control input consumes its own clicks and key presses;
 controls and overlays keep their own immediate behavior.
 
-Host source-audio feedback describes the selected source independently of Host
-microphone commentary. Viewer sound controls require a received audio track and,
+Host source-audio feedback describes the selected source independently of room
+voice. Viewer picture-sound controls require a received audio track and,
 when the Host supplies input availability, an available source or microphone
-input. With no input, sound controls are disabled with the no-audio explanation;
+input (including published commentary from older Hosts). With no input, sound controls are disabled with the no-audio explanation;
 the Viewer's volume and mute preferences remain intact for audio returning.
 Older Hosts without this fact retain received-track feedback. These controls do
 not infer input presence from silence or change capture, transport or relay audio.
@@ -324,6 +336,8 @@ at most 24 Unicode code points, and rejects unsafe control or bidirectional
 characters. It is a label, not an account, authorization identity, or routing
 input. Duplicate names are allowed and receive a room-scoped peer suffix only
 when disambiguation is needed.
+Chat applies the same labeling rule to recorded sender names; repeated messages
+from one peer do not create another identity. Media readiness never owns identity.
 
 Connection details are progressive and use one card shape for P2P, peer relay,
 and SFU Viewers. Summary fields prioritize actual resolution, FPS, bitrate, and

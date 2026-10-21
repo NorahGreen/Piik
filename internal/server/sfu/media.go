@@ -64,6 +64,7 @@ type Media struct {
 	options      MediaOptions
 	mu           sync.Mutex
 	publications map[ResourceFence]*mediaPublication
+	voice        *voiceMedia
 	closed       bool
 	closeOnce    sync.Once
 	closeErr     error
@@ -102,18 +103,20 @@ type subscriptionKey struct {
 }
 
 type mediaSubscription struct {
-	key       subscriptionKey
-	transport *forwarding.Transport
-	signaling sync.Mutex
-	ctx       context.Context
-	cancel    context.CancelFunc
-	prepared  chan struct{}
-	closeOnce sync.Once
-	closeErr  error
+	key subscriptionKey
+	// Admission belongs to the room edge; its video transport can be replaced.
+	resourceConnectionID string
+	transport            *forwarding.Transport
+	signaling            sync.Mutex
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	prepared             chan struct{}
+	closeOnce            sync.Once
+	closeErr             error
 }
 
 func NewMedia(options MediaOptions) *Media {
-	return &Media{options: options, publications: make(map[ResourceFence]*mediaPublication)}
+	return &Media{options: options, publications: make(map[ResourceFence]*mediaPublication), voice: newVoiceMedia(options.Settings)}
 }
 
 func (media *Media) HasPublication(fence ResourceFence, connectionID string) bool {
@@ -553,7 +556,8 @@ func (media *Media) PrepareSubscriber(ctx context.Context, fence SubscriptionFen
 	key := subscriptionKey{peerID: fence.ViewerPeerID, connectionID: connectionID}
 	// The route-operation context bounds preparation, not committed media lifetime.
 	lifetime, cancel := context.WithCancel(context.Background())
-	subscriber := &mediaSubscription{key: key, ctx: lifetime, cancel: cancel, prepared: make(chan struct{})}
+	subscriber := &mediaSubscription{key: key, resourceConnectionID: fence.ConnectionID,
+		ctx: lifetime, cancel: cancel, prepared: make(chan struct{})}
 	publication.mu.Lock()
 	if publication.closed || publication.failure != nil || publication.subscribers[key] != nil {
 		publication.mu.Unlock()
@@ -708,12 +712,19 @@ func (media *Media) CloseSubscription(fence SubscriptionFence, connectionID stri
 	}
 	key := subscriptionKey{peerID: fence.ViewerPeerID, connectionID: connectionID}
 	publication.mu.Lock()
-	subscriber := publication.subscribers[key]
-	publication.mu.Unlock()
-	if subscriber != nil {
-		return publication.closeSubscriber(subscriber)
+	var subscribers []*mediaSubscription
+	for _, subscriber := range publication.subscribers {
+		if subscriber.key == key || connectionID == fence.ConnectionID &&
+			subscriber.key.peerID == fence.ViewerPeerID && subscriber.resourceConnectionID == connectionID {
+			subscribers = append(subscribers, subscriber)
+		}
 	}
-	return nil
+	publication.mu.Unlock()
+	var closeErr error
+	for _, subscriber := range subscribers {
+		closeErr = errors.Join(closeErr, publication.closeSubscriber(subscriber))
+	}
+	return closeErr
 }
 
 func (publication *mediaPublication) closeSubscriber(subscriber *mediaSubscription) error {
@@ -747,6 +758,20 @@ func (media *Media) ClosePublication(fence ResourceFence) error {
 	}
 	media.mu.Unlock()
 	return err
+}
+
+// RetirePublication detaches only the identified video publisher. Its logical
+// room reservation remains admitted; a replacement may be prepared immediately.
+// The caller owns scheduling and joining the returned physical close.
+func (media *Media) RetirePublication(fence ResourceFence, connectionID string) func() error {
+	media.mu.Lock()
+	defer media.mu.Unlock()
+	publication := media.publications[fence]
+	if publication == nil || publication.connectionID != connectionID {
+		return nil
+	}
+	delete(media.publications, fence)
+	return publication.close
 }
 
 func (publication *mediaPublication) close() error {
@@ -794,6 +819,7 @@ func (media *Media) Close() error {
 		publications := media.publications
 		media.publications = nil
 		media.mu.Unlock()
+		media.closeErr = media.voice.close()
 		for _, publication := range publications {
 			media.closeErr = errors.Join(media.closeErr, publication.close())
 		}

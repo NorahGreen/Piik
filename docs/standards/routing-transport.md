@@ -9,7 +9,7 @@ owns ports and [self-hosting](../operations/self-hosting.md) owns service setup.
 
 - Media defaults to automatic P2P-first routing. Viewers may constrain their own
   incoming hop; parent selection, transport and adaptation remain automatic.
-- The Host is the only source. Every Viewer has at most one active upstream, and
+- The Host is the only shared-picture source. Every Viewer has at most one active upstream, and
   the committed media graph is acyclic and source-reachable.
 - A Viewer may relay its received Browser track to bounded peer children. This
   is standard WebRTC receive, decode, and per-child re-encode, not shared encode.
@@ -95,6 +95,13 @@ participants retain their established protocol and automatic behavior.
 Every non-server endpoint has one server-authoritative steady outbound media-
 copy cap `C`, default `2` and configurable only as `1`, `2`, or `3`.
 
+A Viewer can also volunteer to relay to more participants
+for the current visit. That explicit intent raises its permitted fanout only to
+the endpoint's reported capability, at most the room's 20-Viewer limit. Ordinary
+participants keep the configured cap. Withdrawing consent schedules affected
+children through the same operation; it does not abruptly drop the subtree.
+This remains an ordinary Peer relay, with no separate SFU service or authority.
+
 - one peer child consumes one copy;
 - the Host's single SFU publication consumes one copy;
 - upstream receive is free;
@@ -104,6 +111,35 @@ A make-before-break transition may use the one admitted overlap slot and must
 return to steady capacity at commit or abort. SFU publication ingress and
 per-Viewer subscription egress use an independent server admission ledger;
 ordinary endpoint child counts are not server capacity.
+
+## Room Media
+
+One room controller and its existing serial
+operation serve both picture and voice. Opening and joining room voice can acquire
+the graph before sharing; picture start attaches a new video generation and
+picture stop removes that generation while voice remains. Empty rooms allocate
+no media connections, and page entry alone creates no room.
+
+The directed tree still places each Viewer under one parent. Independent Opus
+publications travel both ways along its permitted edges, excluding the ingress
+branch. Voice uses a companion WebRTC audio connection on each selected edge;
+picture retains its existing Browser/Native sender and adaptation owners.
+There is no all-pairs mesh or second route planner. SFU voice reuses its existing
+UDP listener and admission, including on SFU-only sites.
+
+A candidate carrying picture and voice commits only after both decoded-picture
+proof and the required voice transports connect. A silent voice-only candidate
+uses actual transport connection, without requiring samples or a video frame.
+Video-only attachment to an already committed room edge uses its own fresh
+physical identity and decoded-frame proof. Retired facet callbacks cannot
+invalidate a replacement. Stop, pause and failure statuses describe the affected
+consumer; a voice failure does not become a video error.
+When current decoded-picture proof still establishes a healthy committed path,
+a failed companion voice transport is recreated on that same path without
+invalidating picture readiness or consuming a topology candidate. Without that
+proof, the existing route operation owns repair and alternative selection.
+The topology diagram projects connected room edges for voice as well as picture;
+voice readiness never becomes evidence that a video frame has arrived.
 
 ## Reconciliation
 
@@ -306,7 +342,9 @@ encrypted hop-by-hop with DTLS-SRTP but terminates at the SFU; the product does
 not claim operator-blind media without a separately accepted application E2EE
 design. All-UDP-blocked networks currently end in bounded failure.
 
-App Local mode runs this graph without SFU, NAT prediction, or default STUN.
+App Local mode runs this graph without SFU or NAT prediction. Its selected LAN
+address supplies Binding-only STUN on the App's UDP port, so routed virtual
+LANs need not carry Browser mDNS; it uses no public discovery destination.
 One-link mode tunnels only HTTP/WebSocket control and adds public STUN to the
 same Browser/Native P2P edges. Reachable peers form one mixed relay tree; an
 unreachable path adds no route type or score. App-enabled Site pages use that

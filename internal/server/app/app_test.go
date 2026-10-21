@@ -366,7 +366,7 @@ func TestCapabilitiesReportServicesDisabledByDefault(t *testing.T) {
 	server := start(t, Options{Config: testConfig(t)})
 
 	server.do(http.MethodGet, "/api/capabilities").
-		expect(http.StatusOK, `{"sfu":false,"natPrediction":false,"roomInteractions":true,"hostRoomSession":true,"remoteInput":true,"viewerRouteSelection":true,"audioPresence":true,"roomReactionIds":["thumbsup","thumbsdown","laugh","clown","eyeroll","eyes","wow","wave","heart","clap","party","fire","star","sleep","tomato","poop"]}`)
+		expect(http.StatusOK, `{"sfu":false,"natPrediction":false,"roomInteractions":true,"roomVoice":true,"relayVolunteer":true,"hostRoomSession":true,"remoteInput":true,"viewerRouteSelection":true,"audioPresence":true,"roomReactionIds":["thumbsup","thumbsdown","laugh","clown","eyeroll","eyes","wow","wave","heart","clap","party","fire","star","sleep","tomato","poop"]}`)
 
 }
 
@@ -376,7 +376,7 @@ func TestCapabilitiesReportSFUOnlyPolicy(t *testing.T) {
 	configuration.NATPredictionEnabled = true
 	server := start(t, Options{Config: configuration})
 	server.do(http.MethodGet, "/api/capabilities").
-		expect(http.StatusOK, `{"sfu":true,"sfuOnly":true,"natPrediction":false,"roomInteractions":true,"hostRoomSession":true,"remoteInput":true,"viewerRouteSelection":true,"audioPresence":true,"roomReactionIds":["thumbsup","thumbsdown","laugh","clown","eyeroll","eyes","wow","wave","heart","clap","party","fire","star","sleep","tomato","poop"]}`)
+		expect(http.StatusOK, `{"sfu":true,"sfuOnly":true,"natPrediction":false,"roomInteractions":true,"roomVoice":true,"relayVolunteer":true,"hostRoomSession":true,"remoteInput":true,"viewerRouteSelection":true,"audioPresence":true,"roomReactionIds":["thumbsup","thumbsdown","laugh","clown","eyeroll","eyes","wow","wave","heart","clap","party","fire","star","sleep","tomato","poop"]}`)
 }
 
 func TestCapabilitiesReportOptionalNATPredictionWithoutExposingConfiguration(t *testing.T) {
@@ -387,7 +387,7 @@ func TestCapabilitiesReportOptionalNATPredictionWithoutExposingConfiguration(t *
 	server := start(t, Options{Config: configuration})
 
 	server.do(http.MethodGet, "/api/capabilities").
-		expect(http.StatusOK, `{"sfu":false,"natPrediction":true,"roomInteractions":true,"hostRoomSession":true,"remoteInput":true,"viewerRouteSelection":true,"audioPresence":true,"roomReactionIds":["thumbsup","thumbsdown","laugh","clown","eyeroll","eyes","wow","wave","heart","clap","party","fire","star","sleep","tomato","poop"]}`).
+		expect(http.StatusOK, `{"sfu":false,"natPrediction":true,"roomInteractions":true,"roomVoice":true,"relayVolunteer":true,"hostRoomSession":true,"remoteInput":true,"viewerRouteSelection":true,"audioPresence":true,"roomReactionIds":["thumbsup","thumbsdown","laugh","clown","eyeroll","eyes","wow","wave","heart","clap","party","fire","star","sleep","tomato","poop"]}`).
 		expectHeader("Cache-Control", "no-store").
 		expectHeader("X-Content-Type-Options", "nosniff")
 
@@ -430,7 +430,7 @@ func TestSFUListenerFollowsApplicationCloseAndEnd(t *testing.T) {
 				t.Fatal("missing runtime owner")
 			}
 			server.do(http.MethodGet, "/api/capabilities").
-				expect(http.StatusOK, `{"sfu":true,"natPrediction":false,"roomInteractions":true,"hostRoomSession":true,"remoteInput":true,"viewerRouteSelection":true,"audioPresence":true,"roomReactionIds":["thumbsup","thumbsdown","laugh","clown","eyeroll","eyes","wow","wave","heart","clap","party","fire","star","sleep","tomato","poop"]}`)
+				expect(http.StatusOK, `{"sfu":true,"natPrediction":false,"roomInteractions":true,"roomVoice":true,"relayVolunteer":true,"hostRoomSession":true,"remoteInput":true,"viewerRouteSelection":true,"audioPresence":true,"roomReactionIds":["thumbsup","thumbsdown","laugh","clown","eyeroll","eyes","wow","wave","heart","clap","party","fire","star","sleep","tomato","poop"]}`)
 
 			var err error
 			if ending {
@@ -747,6 +747,8 @@ func TestLocalSiteAcceptsTheExactPasswordThroughJSON(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// The public test address is not an installed interface.
+			configuration.STUNListenAddresses = []string{"127.0.0.1:0"}
 			server := start(t, Options{Config: configuration})
 			origin := config.Origin(configuration.PublicBaseURL)
 			for _, wrong := range []string{"", password + "!"} {
@@ -1473,35 +1475,43 @@ func TestUsesTheConfiguredListenHostByDefault(t *testing.T) {
 func TestPreboundListenerHasOneStartupAndShutdownOwner(t *testing.T) {
 	for _, serve := range []bool{false, true} {
 		t.Run(fmt.Sprintf("serve=%t", serve), func(t *testing.T) {
-			listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
-			if err != nil {
-				t.Fatal(err)
-			}
-			address := listener.Addr().(*net.TCPAddr)
-			server := newServer(t, Options{Listener: listener})
-			if serve {
-				port, err := server.Listen(t.Context())
-				if err != nil || port != address.Port || server.listener != listener {
-					t.Fatalf("startup replaced the prebound listener: port=%d err=%v", port, err)
-				}
-				client := &http.Client{Timeout: time.Second}
-				response, err := client.Get("http://" + address.String() + "/healthz")
+			var listeners []net.Listener
+			for range 2 {
+				listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
 				if err != nil {
 					t.Fatal(err)
 				}
-				_ = response.Body.Close()
-				if response.StatusCode != http.StatusOK {
-					t.Fatalf("prebound server health = %d", response.StatusCode)
+				listeners = append(listeners, listener)
+			}
+			address := listeners[0].Addr().(*net.TCPAddr)
+			server := newServer(t, Options{Listeners: listeners})
+			if serve {
+				port, err := server.Listen(t.Context())
+				if err != nil || port != address.Port || server.listeners[0] != listeners[0] {
+					t.Fatalf("startup replaced the prebound listener: port=%d err=%v", port, err)
+				}
+				client := &http.Client{Timeout: time.Second}
+				for _, listener := range listeners {
+					response, err := client.Get("http://" + listener.Addr().String() + "/healthz")
+					if err != nil {
+						t.Fatal(err)
+					}
+					_ = response.Body.Close()
+					if response.StatusCode != http.StatusOK {
+						t.Fatalf("prebound server health = %d", response.StatusCode)
+					}
 				}
 			}
 			if err := server.Close(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			rebound, err := net.ListenTCP("tcp4", address)
-			if err != nil {
-				t.Fatalf("prebound listener survived shutdown: %v", err)
+			for _, listener := range listeners {
+				rebound, err := net.Listen("tcp4", listener.Addr().String())
+				if err != nil {
+					t.Fatalf("prebound listener survived shutdown: %v", err)
+				}
+				_ = rebound.Close()
 			}
-			_ = rebound.Close()
 		})
 	}
 }
@@ -1709,7 +1719,7 @@ func TestReportsAListenerThatDiesWhileServing(t *testing.T) {
 	}
 
 	// Out of band: no Shutdown, so Serve returns a real accept failure.
-	if err := server.listener.Close(); err != nil {
+	if err := server.listeners[0].Close(); err != nil {
 		t.Fatalf("close the listener: %v", err)
 	}
 	waitFor(t, "the serve failure to be reported", func() bool {

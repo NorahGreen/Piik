@@ -27,6 +27,7 @@
     "gate:app-native-host": "tsx scripts/app-native-host-gate.ts",
     "gate:app-browser-fanout": "tsx scripts/app-browser-fanout-gate.ts",
     "gate:embedded-sfu": "tsx scripts/embedded-sfu-gate.ts",
+    "gate:room-voice": "tsx scripts/room-voice-gate.ts",
     "gate:app-link": "tsx scripts/app-link-gate.ts",
     "gate:peer-topology-loopback": "tsx scripts/peer-assisted-benchmark.ts",
     "gate:sfu-admission": "vitest run tests/sfu-client.test.ts tests/route-transition.test.ts && go test ./internal/server/...",
@@ -54,7 +55,7 @@
     "semver": "7.8.5",
     "tsx": "4.23.13",
     "typescript": "~6.0.3",
-    "vite": "8.2.1",
+    "vite": "8.2.4",
     "vitest": "4.1.11",
     "ws": "8.21.3",
     "zod": "4.4.3"

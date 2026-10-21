@@ -79,6 +79,11 @@ func (change *PolicyChange) Apply() error {
 	if m.closed || s.closed || s.policyChange != change || change.ctx.Err() != nil || (change.mode != "off" && !s.available()) {
 		return errors.New("remote input is unavailable")
 	}
+	if change.mode != "off" {
+		if err := m.ensureStopShortcut(); err != nil {
+			return err
+		}
+	}
 	s.setPolicy(change.mode, change.password)
 	return nil
 }
@@ -101,6 +106,7 @@ func (s *Session) setPolicy(mode string, password [32]byte) {
 
 func (s *Session) applyPolicy(mode string, password [32]byte) {
 	s.mode, s.password = mode, password
+	s.manager.releaseIdleShortcut()
 	for _, c := range s.manager.connections {
 		if c.owner == s {
 			s.manager.revoke(c)

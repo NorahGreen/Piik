@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/TNTcraftHIM/Piik/internal/app/lan"
 	"github.com/TNTcraftHIM/Piik/internal/app/launcher"
 	"github.com/TNTcraftHIM/Piik/internal/app/loopback"
+	"github.com/TNTcraftHIM/Piik/internal/app/mediaedge"
 	"github.com/TNTcraftHIM/Piik/internal/app/nativeaudio"
 	"github.com/TNTcraftHIM/Piik/internal/app/nativecapture"
 	"github.com/TNTcraftHIM/Piik/internal/app/nativecontrol"
@@ -32,6 +34,7 @@ import (
 	serverconfig "github.com/TNTcraftHIM/Piik/internal/server/config"
 	"github.com/TNTcraftHIM/Piik/internal/server/protocol"
 	"github.com/TNTcraftHIM/Piik/internal/server/webassets"
+	"github.com/TNTcraftHIM/Piik/internal/tlsconfig"
 	"golang.org/x/mod/semver"
 )
 
@@ -153,10 +156,11 @@ func Run(ctx context.Context, options Options) (returnedErr error) {
 	nativeMedia := discoverNativeMedia(ctx, options.CaptureProcess)
 	input, inputErr := remoteinput.New(ctx, nativeMedia.capture.RemoteInput)
 	if inputErr != nil {
-		slog.Warn("Remote-control prototype unavailable", "reason", inputErr)
+		slog.Warn("Remote control is unavailable", "reason", inputErr)
 	}
 	defer input.Close()
 	nativeMedia.capabilities.RemoteInput = input != nil
+	nativeMedia.capabilities.RemoteStopShortcut = input.SupportsStopShortcut()
 	recordContext := func(selected Options, config appconfig.Config) {
 		if recorder == nil {
 			return
@@ -507,13 +511,18 @@ func runLocal(ctx context.Context, options Options, config appconfig.Config,
 	}
 	slog.Debug("piik-client", "event", "mode", "mode", view.mode)
 	options.console.show(view)
-	listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4zero, Port: options.Port})
+	bindAddress := net.IPv4zero
+	if !options.Link {
+		bindAddress = net.IPv4(127, 0, 0, 1)
+	}
+	listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: bindAddress, Port: options.Port})
 	if err != nil {
 		return errors.Join(failure.LocalPort, fmt.Errorf("local server port is unavailable: %w", err))
 	}
+	listeners := []net.Listener{listener}
 	defer func() {
-		if listener != nil {
-			_ = listener.Close()
+		for _, owned := range listeners {
+			_ = owned.Close()
 		}
 	}()
 	addresses, lanErr := lan.Addresses()
@@ -526,6 +535,18 @@ func runLocal(ctx context.Context, options Options, config appconfig.Config,
 	// selection (multi-interface hosts may not have one obvious address).
 	if lanErr != nil && !options.Link {
 		return errors.Join(failure.LocalNetwork, lanErr)
+	}
+	if !options.Link {
+		configuration, err := tlsconfig.SelfSigned(selectedAddress)
+		if err != nil {
+			return errors.Join(failure.LocalServer, fmt.Errorf("local HTTPS certificate could not be created: %w", err))
+		}
+		secureListener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.ParseIP(selectedAddress), Port: options.Port})
+		if err != nil {
+			return errors.Join(failure.LocalPort, fmt.Errorf("local HTTPS port is unavailable: %w", err))
+		}
+		listeners = append(listeners, tls.NewListener(secureListener, configuration))
+		view.certificate = tlsconfig.Fingerprint(configuration)
 	}
 	var tunnel *publictunnel.Process
 	publicOrigin := ""
@@ -565,17 +586,21 @@ func runLocal(ctx context.Context, options Options, config appconfig.Config,
 		logger = slog.New(slog.NewTextHandler(options.console.logWriter(), nil))
 	}
 	localServer, err := serverapp.New(serverapp.Options{
-		Config:   localConfig,
-		Listener: listener,
-		Assets:   webassets.FS(),
-		Logger:   logger,
+		Config:    localConfig,
+		Listeners: listeners,
+		Assets:    webassets.FS(),
+		Logger:    logger,
 	})
 	if err != nil {
 		return errors.Join(failure.LocalServer, err)
 	}
-	listener = nil // Ownership is now in the application's startup/shutdown path.
+	listeners = nil // Ownership is now in the application's startup/shutdown path.
 	defer func() { returnedErr = errors.Join(returnedErr, endLocalServer(localServer)) }()
 	if _, err = localServer.Listen(ctx); err != nil {
+		var socketError *net.OpError
+		if errors.As(err, &socketError) && socketError.Op == "listen" {
+			return errors.Join(failure.LocalPort, err)
+		}
 		return errors.Join(failure.LocalServer, err)
 	}
 	slog.Debug("piik-client", "event", "local-server-ready", "port", options.Port, "publicLink", publicOrigin != "")
@@ -591,7 +616,8 @@ func runLocal(ctx context.Context, options Options, config appconfig.Config,
 		if publicOrigin != "" {
 			fmt.Printf("Public invitation origin: %s\n", publicOrigin)
 		} else {
-			fmt.Printf("LAN invitation origin: http://%s:%d\n", selectedAddress, options.Port)
+			fmt.Printf("LAN invitation origin: %s\n", serverconfig.Origin(localConfig.PublicBaseURL))
+			fmt.Printf("LAN certificate SHA-256: %s\n", view.certificate)
 		}
 	}
 	launchURL := launchURLWithLocalAccess(
@@ -600,7 +626,7 @@ func runLocal(ctx context.Context, options Options, config appconfig.Config,
 	)
 	view.state, view.entry, view.invite = "ready", launchURL, publicOrigin
 	if view.invite == "" {
-		view.invite = fmt.Sprintf("http://%s:%d", selectedAddress, options.Port)
+		view.invite = serverconfig.Origin(localConfig.PublicBaseURL)
 	}
 	options.console.show(view)
 	if !options.DisableBrowser {
@@ -694,7 +720,7 @@ func discoverNativeMedia(ctx context.Context, configuredPath string) nativeRunti
 	capabilities, err := nativecapture.Discover(ctx, path)
 	if err != nil {
 		return nativeRuntime{captureProcess: path, discoveryErr: err,
-			capabilities: loopback.NativeMediaCapabilities{ReceiverReuse: true}}
+			capabilities: loopback.NativeMediaCapabilities{ReceiverReuse: true, MaxRelayChildren: mediaedge.MaxRelayChildren}}
 	}
 	summary := capabilities.Summary()
 	return nativeRuntime{
@@ -710,6 +736,7 @@ func discoverNativeMedia(ctx context.Context, configuredPath string) nativeRunti
 			MaxVideoBitrate:              nativecapture.MaxVideoBitrate,
 			MaxAudioBitrate:              nativeaudio.MaxSendBitrate,
 			ReceiverReuse:                true,
+			MaxRelayChildren:             mediaedge.MaxRelayChildren,
 			Video:                        summary.Video,
 			CaptureBorderControl:         summary.CaptureBorderControl,
 			Microphone:                   summary.Microphone,
@@ -722,9 +749,9 @@ func discoverNativeMedia(ctx context.Context, configuredPath string) nativeRunti
 	}
 }
 
-// localSTUNURLs is the Local room authority's ICE configuration. Only --link
-// has a public path, so only --link configures public STUN and the bounded NAT
-// prediction survey. Native edges receive ICE configuration from that authority;
+// localSTUNURLs supplies public-link discovery. Pure LAN discovery is composed
+// by serverconfig.Local on the selected interface. Only --link configures public
+// STUN and the bounded NAT prediction survey. Native edges use that authority;
 // serverconfig.Local deliberately does not inherit Hosted environment settings.
 // An explicit App override replaces every public destination, including the
 // survey pair. With fewer than three servers only ordinary ICE is available.

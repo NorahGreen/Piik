@@ -1,6 +1,6 @@
 # Project Memory
 
-Last updated: 2026-10-19
+Last updated: 2026-10-21
 
 Piik is private, low-latency screen sharing for one Host and up to 20
 authenticated friends. The current product surface is Web Host, Web Viewer, and
@@ -36,8 +36,8 @@ unsupported APIs and failed pooling retain ordinary senders. Windows, macOS and
 Linux producers share one encoded-frame
 boundary and Host quality controls. Source replacement retains route and
 connection identity; lower-output adaptation preserves the original and higher
-sibling outputs. [Status](./status.md) owns the remaining physical and release
-acceptance boundary; runtime release descriptors own deployed identity.
+sibling outputs. [Status](./status.md) owns candidate and release readiness;
+runtime release descriptors own deployed identity.
 The Local launcher keeps an optional user-chosen site-access password; leaving it
 blank keeps the self-contained site open.
 
@@ -76,9 +76,11 @@ implementation and routine UI detail.
   publication; Piik configures no TURN or TCP media route. Hosted operators may
   require SFU-only media through the same controller. On P2P-first sites, a
   pre-share peer-only policy can exclude that SFU suffix for one share generation.
-- Every endpoint shares one steady outbound-copy cap, default `2` and limited to
-  `1..3`. One room controller owns one committed graph, one reconcile loop, and
-  one serial child operation. First decoded frame commits availability work;
+- Ordinary endpoints share one steady outbound-copy cap, default `2` and limited to
+  `1..3`; the candidate's explicit relay volunteer uses the
+  [capacity owner](./standards/routing-transport.md#endpoint-and-server-capacity).
+  One room controller owns one committed graph, one reconcile loop, and
+  one serial child operation. First decoded frame commits picture availability work;
   accepted quality work adds native edge proof before commit in that operation.
 - Browser WebRTC and the shared Pion/LiveKit media adapter own congestion control,
   media adaptation, pacing and layer selection. Parent demand is local to direct
@@ -102,6 +104,13 @@ implementation and routine UI detail.
 
 ## Current Snapshot
 
+Room voice integrates normal App/Server/Web rather than a
+standalone demo. It keeps room authority and one route controller while picture
+generations and explicitly joined voice publications have separate
+lifetimes. [Status](./status.md#current-work)
+indexes delivery and [room media](./standards/routing-transport.md#room-media)
+owns the new behavior.
+
 Optional attended keyboard/mouse control follows the committed media route back
 to the native Host. One source-scoped grant admits one controller; source change,
 stop and revocation retire it. It adds no separate connection planner or listener.
@@ -116,8 +125,9 @@ room authority and the H.264/VP8 sender gate remain. [Status](./status.md)
 indexes source and deployment evidence; protocol rollback requires
 matching Browser and App artifacts, not only an application symlink.
 
-Current work is owned by the [TODO ledger](./todo.md). Open physical evidence is
-owned by [verification status](./verification-status.md). Environment and initial
+Unfinished work is owned by the [TODO ledger](./todo.md).
+[Verification status](./verification-status.md) summarizes material evidence
+boundaries. Environment and initial
 services are owned by [configuration](./standards/configuration.md) and
 [self-hosting](./operations/self-hosting.md); application release is owned by
 [deployment](./deployment.md), with exact deployed identity retained in the

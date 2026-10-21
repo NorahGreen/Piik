@@ -54,7 +54,8 @@ func (c *Controller) buildCandidatePlans(childPeerID string, sfuOnly, preferUntr
 	parents := []*participant{}
 	for _, parent := range c.participants.Values() {
 		if parent.sessionID != "" && !parent.departureConfirmed && parent.peerID != childPeerID &&
-			!slices.Contains(descendants, parent.peerID) && c.sourceUsable(parent.peerID) && c.targetFits(parent.peerID, childPeerID) {
+			!slices.Contains(descendants, parent.peerID) && c.sourceUsable(parent.peerID) && c.sourceVideoReady(parent.peerID) &&
+			c.voiceParentAllowed(childPeerID, parent.peerID) && c.targetFits(parent.peerID, childPeerID) {
 			parents = append(parents, parent)
 		}
 	}
@@ -142,7 +143,7 @@ func (c *Controller) planCandidate(childPeerID string, tuple CandidateTuple) *Ca
 	if copies+1 <= producer.effectiveDownstreamCapacity {
 		return &CandidatePlan{Tuple: tuple, EndpointTransition: EndpointTransition{Kind: TransitionNone, ProducerPeerID: &producer0}}
 	}
-	if copies+1 <= protocol.EndpointMediaCopyLimit(c.endpointMediaCopyCapacity, protocol.EndpointMediaCopyTransition) {
+	if copies+1 <= c.transitionCopyLimit(producer) {
 		return &CandidatePlan{Tuple: tuple, EndpointTransition: EndpointTransition{Kind: TransitionOverlap, ProducerPeerID: &producer0}}
 	}
 	retire := c.retirementFor(childPeerID, producerPeerID, tuple)
@@ -198,8 +199,8 @@ func (c *Controller) candidateValid(childPeerID string, plan CandidatePlan, att 
 		}
 		parent, _ := c.participants.Get(tuple.ParentPeerID)
 		if parent == nil || parent.sessionID == "" || parent.departureConfirmed || (att != nil && parent.sessionID != att.parentSessionID) ||
-			slices.Contains(c.descendantsOf(childPeerID), parent.peerID) || !c.sourceUsable(parent.peerID) ||
-			!c.targetFits(parent.peerID, childPeerID) {
+			slices.Contains(c.descendantsOf(childPeerID), parent.peerID) || !c.sourceUsable(parent.peerID) || !c.sourceVideoReady(parent.peerID) ||
+			!c.voiceParentAllowed(childPeerID, parent.peerID) || !c.targetFits(parent.peerID, childPeerID) {
 			return false
 		}
 	} else {

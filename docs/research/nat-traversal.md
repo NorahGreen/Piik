@@ -456,7 +456,19 @@ directly and frpc's backend socket through frp, confirming the STUN limitation
 above. These loopback controls do not establish Browser decoding, audible audio,
 public-network performance, loss recovery or QUIC behavior.
 
+The October 20 review also checked frp's [VirtualNet example](https://gofrp.org/en/docs/examples/virtualnet/).
+It describes a TUN-based private network between clients and visitors, which is
+closer to the virtual-LAN approach than fixed-port forwarding. The official guide
+still marks it Alpha and unsuitable for production. It requires frp setup on
+participating endpoints as well as a reachable frps service; it is not part of
+Piik's tested forwarding recipe or a default campus-network recommendation.
+
 A well-connected participant already can help through the existing Viewer relay.
+The normal integration candidate now exposes an explicit voluntary fanout
+override through that controller, bounded by actual endpoint capability and
+the room's 20-Viewer limit. This is not a new SFU worker or a guarantee that the
+participant is reachable. Browser room-voice checks cover a real three-person
+relay and local-mute isolation; external networks remain the next evidence step.
 Browser relays reuse WebRTC senders; Native relays can forward suitable encoded
 media. Any voluntary capacity control should feed the existing room controller,
 with its endpoint cap and current-edge retirement. Bandwidth alone does not prove
@@ -687,8 +699,8 @@ control. No new automatic renomination, probing loop or retry budget is enabled.
 Keep Piik's fresh-interface mux and connection-owned STUN/mapping repairs: the
 newer framework still snapshots its default interface view and caches successful
 universal-mux observations. An upstream release-note match is not sufficient to
-remove these protections. Physical network/device coverage remains in
-[verification status](../verification-status.md#remaining-device-and-network-acceptance).
+remove these protections. [Verification status](../verification-status.md#interpretation)
+summarizes how local evidence applies to device and network claims.
 
 #### Pion Renomination Preflight
 
@@ -1040,6 +1052,41 @@ The cost is one ephemeral UDP socket and, when enabled, one gateway mapping per
 physical connection instead of per Engine. Existing connection/copy limits bound
 their number. This changes no public wire format, fixed service port or route
 policy, and is not evidence that any unmatched field report has been resolved.
+
+## Routed Virtual LAN Discovery
+
+A two-Windows-device UU virtual-LAN trial on 2026-10-20 established HTTP,
+WebSocket and decoded video transport. Ordinary LAN ICE stalled with the remote
+Browser's `.local` candidates. A test-only substitution with that verified
+peer's virtual IP restored picture; removing it and restarting the share
+reproduced the stall. This isolates address discovery rather than proving that
+the virtual LAN blocks media UDP.
+
+The subsequent control removed candidate substitution and supplied a local
+STUN endpoint through the temporary signaling fixture. The Browser then
+advertised a server-reflexive candidate on the virtual address; the Native
+sender selected it and the remote Viewer decoded 1920×1080 at about 20 fps,
+with roughly 32 ms RTT and no loss in the sampled windows. This follows the
+[mDNS candidate guidance](https://rtcweb-wg.github.io/mdns-ice-candidates/draft-ietf-mmusic-mdns-ice-candidates.html),
+which retains numeric reflexive candidates even when host candidates are hidden.
+[mDNS itself is local-link discovery](https://www.rfc-editor.org/rfc/rfc6762).
+
+Pure LAN configuration therefore reuses the existing Binding-only STUN service
+on its selected address and App UDP port. Public-link discovery, NAT prediction,
+media routing and authorization retain their owners. The test's temporary HTTP
+proxy used an already firewall-permitted executable; that initial control alone
+did not establish direct packaged-App reachability.
+
+A same-day follow-up used the packaged App's ordinary Local invitation directly.
+The remote Browser initially timed out before reaching Piik. The host listened
+on the selected virtual address, but Windows classified the adapter as Public,
+blocked inbound traffic by default and had no rule for the new executable path;
+new-app notifications were disabled. With the owner's approval, inbound rules
+were limited to that App, virtual adapter and subnet: TCP on the web port and
+UDP for discovery/media. The remote TCP connection then reached the App process,
+and the owner confirmed both page and picture worked. No proxy, candidate
+substitution or Browser privacy change was used. This closes the direct
+App-to-Browser trial without claiming universal campus-network compatibility.
 
 ## Primary Sources
 

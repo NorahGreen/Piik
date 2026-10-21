@@ -73,8 +73,8 @@ Three independent authorities exist:
    active. It authorizes room creation, Host role, and code-only Viewer
    attempts; it is not a room credential, and Viewer-grant admission cannot
    create or renew it. Cookie transport attributes follow the configured
-   destination: public HTTPS retains the Secure host-prefixed cookie, while a
-   separately configured HTTP LAN origin can use its HTTP cookie. Login,
+   destination: HTTPS retains the Secure host-prefixed cookie, while a
+   separately configured HTTP origin, such as App loopback, uses its HTTP cookie. Login,
    renewal, room creation and WebSocket admission use that same selection.
    Cookie signatures use a random process key independent of the password;
    restarting the Server/App requires site-password entry again. This does not
@@ -158,6 +158,33 @@ end-to-end encrypted, and the site operator can access live message contents.
 the distinction between a room session and its current media publication.
 [Interaction research](../research/room-interactions.md) records delivery bounds,
 compatibility and design rationale.
+
+## Room Voice
+
+Optional room voice uses the same authenticated room.
+The Host joining opens room voice; leaving closes it for everyone. Channel
+availability is derived from that membership, not a separate switch. Authenticated
+room members can join an open channel without another approval. Joining never
+opens a microphone. Closing clears everyone's voice membership and publications;
+reopening does not rejoin Viewers or restart microphones. Each speaker explicitly
+starts capture and owns one server-assigned publication; mute, leaving and
+session replacement retire that publication. Local mute changes
+only the listener's playback, including when that listener relays for others.
+Pausing listening mutes all local room-voice playback without changing the
+microphone, membership or forwarding. Microphone and listening are independent.
+
+Joining also authorizes a participant to forward decodable voice. A video relay
+outside voice cannot carry it; the existing route controller selects a joined
+path or reports that voice is unavailable. Local deafening never removes that
+forwarding responsibility.
+This is transport encryption between neighbors, not end-to-end encryption
+against an admitted relay or the SFU operator.
+
+Voice membership and routes outlive picture pause, stop and source replacement.
+Leaving voice releases its microphone and forwarding demand; room retirement or
+authorization loss ends the corresponding voice authority. Runtime voice state
+is not persisted. The [routing contract](./routing-transport.md#room-media)
+owns placement and recovery; [status](../status.md#current-work) indexes delivery.
 
 ## Persistence Modes
 
